@@ -2,10 +2,6 @@
  * app/services/StorageService.js
  *
  * Manages the SQLite database persistence layer.
- * - Initializes sql.js (WebAssembly).
- * - Loads the database from IndexedDB on startup.
- * - Saves the database back to IndexedDB after every modification.
- * - Provides simple methods (`query`, `execute`) for models to interact with the DB.
  */
 const StorageService = {
     db: null,
@@ -15,21 +11,14 @@ const StorageService = {
     isSaving: false,
     saveQueue: false,
 
-    /**
-     * Initializes the database. Must be called once after the app starts.
-     * It loads sql.js, retrieves the DB file from IndexedDB, or creates a new one.
-     * @returns {Promise<void>}
-     */
     async init() {
         if (this.isInitialized) return;
 
         try {
-            // Initialize sql.js library
             const SQL = await initSqlJs({
                 locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${file}`
             });
 
-            // Load the database file from IndexedDB
             const dbFile = await this.loadDbFromIndexedDB();
 
             if (dbFile) {
@@ -38,10 +27,17 @@ const StorageService = {
             } else {
                 console.log("StorageService: No existing database found. Creating a new one.");
                 this.db = new SQL.Database();
-                await this.createSchema(); // Create tables only if DB is new
+                // --- FIX START ---
+                // Set initialized to true BEFORE creating the schema.
+                this.isInitialized = true; 
+                await this.createSchema();
+                // --- FIX END ---
             }
 
-            this.isInitialized = true;
+            // If we loaded an existing DB, set initialized to true here.
+            if (!this.isInitialized) {
+                this.isInitialized = true;
+            }
             console.log("StorageService: Database initialized successfully.");
 
         } catch (error) {
@@ -50,18 +46,10 @@ const StorageService = {
         }
     },
 
-    /**
-     * Executes a query that returns data (e.g., SELECT).
-     * @param {string} sql - The SQL query string.
-     * @param {Array<any>} [params=[]] - Parameters for prepared statements.
-     * @returns {Promise<Array<object>>} An array of result objects.
-     */
     async query(sql, params = []) {
         if (!this.isInitialized) throw new Error("Database not initialized.");
         const results = this.db.exec(sql, params);
         if (results.length === 0) return [];
-
-        // Convert the raw result into a more usable array of objects
         const columns = results[0].columns;
         return results[0].values.map(row => {
             const obj = {};
@@ -70,23 +58,12 @@ const StorageService = {
         });
     },
 
-    /**
-     * Executes a command that modifies data (e.g., INSERT, UPDATE, DELETE).
-     * @param {string} sql - The SQL command string.
-     * @param {Array<any>} [params=[]] - Parameters for prepared statements.
-     * @returns {Promise<void>}
-     */
     async execute(sql, params = []) {
         if (!this.isInitialized) throw new Error("Database not initialized.");
         this.db.run(sql, params);
-        // After every modification, trigger a save to IndexedDB
         await this.scheduleSave();
     },
 
-    /**
-     * Schedules a save operation to prevent multiple rapid saves.
-     * @private
-     */
     async scheduleSave() {
         if (this.isSaving) {
             this.saveQueue = true;
@@ -101,62 +78,42 @@ const StorageService = {
         }
     },
 
-    /**
-     * Saves the current state of the database to IndexedDB.
-     * @private
-     */
     async saveDbToIndexedDB() {
         return new Promise((resolve, reject) => {
             const dbData = this.db.export();
             const request = indexedDB.open(this.dbName, 1);
-
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
                 if (!db.objectStoreNames.contains(this.dbStoreName)) {
                     db.createObjectStore(this.dbStoreName);
                 }
             };
-
             request.onsuccess = (event) => {
                 const db = event.target.result;
                 const transaction = db.transaction([this.dbStoreName], 'readwrite');
-                const store = transaction.objectStore(this.dbStoreName);
-                store.put(dbData, 'db_file');
-                transaction.oncomplete = () => {
-                    console.log("StorageService: Database saved to IndexedDB.");
-                    resolve();
-                };
+                transaction.objectStore(this.dbStoreName).put(dbData, 'db_file');
+                transaction.oncomplete = () => resolve();
                 transaction.onerror = (err) => reject(err);
             };
             request.onerror = (err) => reject(err);
         });
     },
 
-    /**
-     * Loads the database file from IndexedDB.
-     * @private
-     * @returns {Promise<Uint8Array|null>} The database file as a byte array, or null if not found.
-     */
     async loadDbFromIndexedDB() {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(this.dbName, 1);
-
             request.onupgradeneeded = (event) => {
-                const db = event.target.result;
-                if (!db.objectStoreNames.contains(this.dbStoreName)) {
-                    db.createObjectStore(this.dbStoreName);
+                if (!event.target.result.objectStoreNames.contains(this.dbStoreName)) {
+                    event.target.result.createObjectStore(this.dbStoreName);
                 }
             };
-
             request.onsuccess = (event) => {
                 const db = event.target.result;
                 if (!db.objectStoreNames.contains(this.dbStoreName)) {
-                    resolve(null); // Store doesn't exist yet
+                    resolve(null);
                     return;
                 }
-                const transaction = db.transaction([this.dbStoreName], 'readonly');
-                const store = transaction.objectStore(this.dbStoreName);
-                const getRequest = store.get('db_file');
+                const getRequest = db.transaction([this.dbStoreName], 'readonly').objectStore(this.dbStoreName).get('db_file');
                 getRequest.onsuccess = () => resolve(getRequest.result || null);
                 getRequest.onerror = (err) => reject(err);
             };
@@ -164,41 +121,23 @@ const StorageService = {
         });
     },
 
-    /**
-     * Creates the initial database schema if the database is new.
-     * @private
-     */
     async createSchema() {
         const schema = `
             CREATE TABLE IF NOT EXISTS notes (
-                id TEXT PRIMARY KEY,
-                title_encrypted TEXT,
-                content_encrypted TEXT,
-                created_at INTEGER,
-                updated_at INTEGER,
-                tags_encrypted TEXT,
-                is_favorite INTEGER DEFAULT 0
+                id TEXT PRIMARY KEY, title_encrypted TEXT, content_encrypted TEXT,
+                created_at INTEGER, updated_at INTEGER, tags_encrypted TEXT, is_favorite INTEGER DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at);
-
             CREATE TABLE IF NOT EXISTS events (
-                id TEXT PRIMARY KEY,
-                title_encrypted TEXT NOT NULL,
-                description_encrypted TEXT,
-                start_time INTEGER NOT NULL,
-                end_time INTEGER,
-                is_all_day INTEGER DEFAULT 0,
-                calendar_type TEXT NOT NULL,
-                rrule_encrypted TEXT
+                id TEXT PRIMARY KEY, title_encrypted TEXT NOT NULL, description_encrypted TEXT,
+                start_time INTEGER NOT NULL, end_time INTEGER, is_all_day INTEGER DEFAULT 0,
+                calendar_type TEXT NOT NULL, rrule_encrypted TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_events_start_time ON events(start_time);
-
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
+            CREATE TABLE IF NOT EXISTS settings ( key TEXT PRIMARY KEY, value TEXT NOT NULL );
         `;
         await this.execute(schema);
         console.log("StorageService: Database schema created.");
     }
 };
+

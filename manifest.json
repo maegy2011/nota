@@ -1,0 +1,25 @@
+{
+    "name": "تطبيق الملاحظات والتقويم",
+    "short_name": "ملاحظاتي",
+    "description": "تطبيق آمن لإدارة الملاحظات والأحداث والتقويمات، يعمل بدون إنترنت.",
+    "lang": "ar-EG",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#f7f8fa",
+    "theme_color": "#007aff",
+    "orientation": "portrait-primary",
+    "icons": [
+        {
+            "src": "app/assets/icons/icon-192x192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "app/assets/icons/icon-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ]
+}
+

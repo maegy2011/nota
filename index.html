@@ -22,24 +22,41 @@
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
 </head>
 
-<body x-data="appController()" x-init="init()" x-cloak>
+<body x-data="appController()" x-init="init()" x-cloak
+      @save-note-request.window="notesController.saveNote($event.detail.note)"
+      @close-editor-request.window="notesController.closeEditor()"
+      @setup-new-pin.window="setupNewPIN($event.detail.pin)">
 
-    <!-- Splash Screen: Shown during initial asset loading -->
-    <!-- Content is in app/views/partials/splash-screen.html -->
-    <div x-html="splashScreenHtml"></div>
+    <!-- Splash Screen -->
+    <div x-show="isLoading" class="splash-screen">
+        <svg class="logo" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+        <p class="loading-text">جاري التحميل...</p>
+    </div>
 
-    <!-- PIN Lock Screen: Shown if app is locked -->
-    <!-- Content is in app/views/partials/pin-lock-screen.html -->
-    <div x-show="isLocked" @unlock.window="handleUnlockAttempt($event)" x-html="pinLockScreenHtml"></div>
+    <!-- PIN Lock Screen -->
+    <div x-show="isLocked" @unlock.window="handleUnlockAttempt($event)">
+        <div class="pin-lock-screen" x-data="pinLockScreen()" @unlock-failed.window="showError()">
+            <div class="pin-lock-content">
+                <h3>أدخل رمز الدخول</h3>
+                <div class="pin-dots" :class="{ 'shake': error }">
+                    <template x-for="i in 4"><span class="dot" :class="{ 'filled': pin.length >= i }"></span></template>
+                </div>
+                <p x-show="error" class="error-message" aria-live="assertive">رمز الدخول غير صحيح.</p>
+                <div class="keypad">
+                    <template x-for="num in [1, 2, 3, 4, 5, 6, 7, 8, 9]"><button @click="append(num)" x-text="num"></button></template>
+                    <button class="keypad-icon" @click="clear()"></button>
+                    <button @click="append(0)">0</button>
+                    <button class="keypad-icon" @click="backspace()"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path><line x1="18" y1="9" x2="12" y2="15"></line><line x1="12" y1="9" x2="18" y2="15"></line></svg></button>
+                </div>
+            </div>
+        </div>
+    </div>
     
     <!-- New User Setup Screen -->
     <div x-show="isNewUser" x-data="newUserSetupController()" class="pin-lock-screen">
-        <!-- A simplified version of the PIN screen for setup -->
         <div class="pin-lock-content">
             <h3>إعداد رمز دخول جديد</h3>
-            <div class="pin-dots">
-                <template x-for="i in 4"><span class="dot" :class="{ 'filled': pin.length >= i }"></span></template>
-            </div>
+            <div class="pin-dots"><template x-for="i in 4"><span class="dot" :class="{ 'filled': pin.length >= i }"></span></template></div>
             <p x-show="!isConfirming">أدخل الرمز المكون من 4 أرقام</p>
             <p x-show="isConfirming">أعد إدخال الرمز للتأكيد</p>
             <div class="keypad">
@@ -51,91 +68,164 @@
         </div>
     </div>
 
-    <!-- Main Application Content: Shown when unlocked -->
-    <main x-show="!isLocked && !isNewUser" class="app-container">
-        <!-- Main Layout: Notes and Calendar views -->
-        <!-- Content is in app/views/layouts/main.html -->
-        <div x-html="mainLayoutHtml"></div>
-
-        <!-- Rich Text Editor Overlay -->
-        <!-- This will be controlled by notesController inside main.html -->
+    <!-- Main Application Content -->
+    <main x-show="!isLocked && !isNewUser" class="app-container" x-data="{ activeTab: 'notes' }">
+        <header class="main-header">
+            <h1 x-text="activeTab === 'notes' ? 'ملاحظاتي' : 'التقويم'"></h1>
+        </header>
+        <nav class="tab-nav">
+            <button @click="activeTab = 'notes'" :class="{ 'active': activeTab === 'notes' }">الملاحظات</button>
+            <button @click="activeTab = 'calendar'" :class="{ 'active': activeTab === 'calendar' }">التقويم</button>
+        </nav>
+        <div class="content-area">
+            <!-- Notes View -->
+            <div x-show="activeTab === 'notes'" x-data="notesController">
+                <div x-show="isLoading" class="loading-indicator"><p>جاري تحميل الملاحظات...</p></div>
+                <div x-show="!isLoading && notes.length === 0" class="empty-state"><p>لا توجد ملاحظات.</p></div>
+                <ul x-show="!isLoading && notes.length > 0" class="notes-list">
+                    <template x-for="note in notes" :key="note.id">
+                        <li @click="editNote(note)">
+                            <h3 class="note-title" x-text="note.title || 'ملاحظة بلا عنوان'"></h3>
+                            <p class="note-snippet" x-text="truncate(note.content, 100)"></p>
+                            <div class="note-meta"><span class="note-date" x-text="formatDate(note.updatedAt)"></span></div>
+                        </li>
+                    </template>
+                </ul>
+                <button @click="createNewNote()" class="fab" aria-label="إضافة ملاحظة جديدة">+</button>
+                <!-- Rich Text Editor (controlled by notesController) -->
+                <template x-if="isEditing">
+                    <div class="editor-overlay" x-data="editorController(activeNote)">
+                        <div class="editor-toolbar">
+                            <button @click="saveNote()" class="button-primary">حفظ</button>
+                            <div class="format-buttons"><button @click="format('bold')"><b>B</b></button></div>
+                            <button @click="closeEditor()" class="button-secondary">إغلاق</button>
+                        </div>
+                        <div class="editor-body">
+                            <input type="text" x-model="note.title" placeholder="عنوان الملاحظة..." class="editor-title">
+                            <div id="rich-text-content" class="editor-content" contenteditable="true" x-html="note.content"></div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <!-- Calendar View -->
+            <div x-show="activeTab === 'calendar'"><p>واجهة التقويم ستكون هنا.</p></div>
+        </div>
     </main>
 
-    <!-- === JAVASCRIPT LIBRARIES === -->
+    <!-- === JAVASCRIPT LIBRARIES & SCRIPTS === -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment-hijri/2.1.2/moment-hijri.min.js"></script>
-
-    <!-- === SERVICES === -->
     <script src="app/services/CryptoService.js"></script>
     <script src="app/services/StorageService.js"></script>
-    <script src="app/services/CalendarService.js"></script>
-
-    <!-- === UTILS === -->
-    <script src="app/utils/DateFormatter.js"></script>
-    <script src="app/utils/Validator.js"></script>
-
-    <!-- === MODELS === -->
     <script src="app/models/Note.js"></script>
-    <script src="app/models/Event.js"></script>
-    <script src="app/models/Settings.js"></script>
-
-    <!-- === CONTROLLERS === -->
-    <script src="app/controllers/AuthController.js"></script>
-    <script src="app/controllers/SettingsController.js"></script>
-    <script src="app/controllers/NoteController.js"></script>
-    <script src="app/controllers/CalendarController.js"></script>
     
-    <!-- === MAIN APP CONTROLLER === -->
     <script>
-        function appController() {
+        // Helper functions
+        function formatDate(timestamp) { return new Date(timestamp).toLocaleDateString('ar-EG'); }
+        function truncate(text, length) {
+            if (!text) return '';
+            const cleanText = text.replace(/<[^>]+>/g, '');
+            return cleanText.length > length ? cleanText.substring(0, length) + '...' : cleanText;
+        }
+
+        // PIN Screen Controller
+        function pinLockScreen() {
             return {
-                isLoading: true,
-                isLocked: true,
-                isNewUser: false,
-                // --- Partials HTML ---
-                splashScreenHtml: '',
-                pinLockScreenHtml: '',
-                mainLayoutHtml: '',
-                // --- Auth Logic ---
-                ...authController(),
-                // --- Main Init ---
-                async init() {
-                    // Start loading partials and DB in parallel
-                    const partialsPromise = this.loadPartials();
-                    const dbPromise = StorageService.init();
-                    
-                    this.authInit(); // Renamed from init() in authController to avoid conflict
-                    
-                    await Promise.all([partialsPromise, dbPromise]);
-                    
-                    // Hide splash screen after a minimum duration for better UX
-                    setTimeout(() => {
-                        this.isLoading = false;
-                        if (this.isNewUser) {
-                            this.isLocked = false; // Don't show lock screen for new user
-                        }
-                    }, 500);
+                pin: '', error: false,
+                append(num) {
+                    if (this.pin.length < 4) this.pin += num;
+                    if (this.pin.length === 4) this.$dispatch('unlock', { pin: this.pin });
                 },
-                authInit() { this.init(); }, // Bridge to the original authController.init
-                async loadPartials() {
-                    const [splash, pin, main] = await Promise.all([
-                        fetch('app/views/partials/splash-screen.html').then(res => res.text()),
-                        fetch('app/views/partials/pin-lock-screen.html').then(res => res.text()),
-                        fetch('app/views/layouts/main.html').then(res => res.text())
-                    ]);
-                    this.splashScreenHtml = splash;
-                    this.pinLockScreenHtml = pin;
-                    this.mainLayoutHtml = main;
-                }
+                backspace() { this.pin = this.pin.slice(0, -1); },
+                clear() { this.pin = ''; },
+                showError() { this.error = true; setTimeout(() => { this.pin = ''; this.error = false; }, 800); }
             };
         }
 
+        // Editor Controller
+        function editorController(noteToEdit) {
+            return {
+                note: noteToEdit,
+                format(cmd) { document.execCommand(cmd, false, null); },
+                saveNote() {
+                    this.note.content = document.getElementById('rich-text-content').innerHTML;
+                    this.$dispatch('save-note-request', { note: this.note });
+                },
+                closeEditor() { this.$dispatch('close-editor-request'); }
+            };
+        }
+
+        // Notes Controller
+        const notesController = {
+            notes: [], isLoading: true, isEditing: false, activeNote: null, masterKey: null,
+            init(key) {
+                if (key && !this.masterKey) {
+                    this.masterKey = key;
+                    this.loadNotes();
+                }
+            },
+            async loadNotes() {
+                if (!this.masterKey) {
+                    console.warn("NotesController: Cannot load notes without masterKey.");
+                    return;
+                }
+                this.isLoading = true;
+                this.notes = await Note.findAll(this.masterKey);
+                this.isLoading = false;
+            },
+            async saveNote(noteData) {
+                if (!this.masterKey) return;
+                if (noteData.id) await Note.update(noteData.id, noteData, this.masterKey);
+                else await Note.create(noteData, this.masterKey);
+                this.closeEditor();
+                this.loadNotes();
+            },
+            createNewNote() { this.activeNote = { id: null, title: '', content: '' }; this.isEditing = true; },
+            editNote(note) { this.activeNote = { ...note }; this.isEditing = true; },
+            closeEditor() { this.isEditing = false; this.activeNote = null; }
+        };
+
+        // Main App Controller
+        function appController() {
+            return {
+                isLoading: true, isLocked: true, isNewUser: false, masterKey: null, notesController: notesController,
+                async init() {
+                    await StorageService.init();
+                    const salt = localStorage.getItem('user_salt');
+                    if (!salt) this.isNewUser = true;
+                    this.isLocked = !this.isNewUser;
+                    this.isLoading = false;
+                },
+                async handleUnlockAttempt(event) {
+                    const pin = event.detail.pin;
+                    const salt = new Uint8Array(JSON.parse(localStorage.getItem('user_salt')));
+                    const verificationData = localStorage.getItem('verification_data');
+                    const key = await CryptoService.deriveKeyFromPIN(pin, salt);
+                    const decrypted = await CryptoService.decrypt(verificationData, key);
+                    if (decrypted === 'verified') {
+                        this.masterKey = key;
+                        this.isLocked = false;
+                        this.$nextTick(() => {
+                            this.notesController.init(this.masterKey);
+                        });
+                    } else {
+                        this.$dispatch('unlock-failed');
+                    }
+                },
+                async setupNewPIN(pin) {
+                    const salt = CryptoService.generateSalt();
+                    const key = await CryptoService.deriveKeyFromPIN(pin, salt);
+                    const verificationData = await CryptoService.encrypt('verified', key);
+                    localStorage.setItem('user_salt', JSON.stringify(Array.from(salt)));
+                    localStorage.setItem('verification_data', verificationData);
+                    window.location.reload();
+                }
+            };
+        }
+        
+        // New User Setup Controller
         function newUserSetupController() {
             return {
-                pin: '',
-                confirmPin: '',
-                isConfirming: false,
+                pin: '', confirmPin: '', isConfirming: false,
                 append(num) {
                     if (this.pin.length < 4) this.pin += num;
                     if (this.pin.length === 4) {
@@ -145,28 +235,30 @@
                             this.pin = '';
                         } else {
                             if (this.pin === this.confirmPin) {
-                                // Dispatch event to AuthController to finalize setup
-                                window.dispatchEvent(new CustomEvent('setup-new-pin', { detail: { pin: this.pin } }));
+                                this.$dispatch('setup-new-pin', { pin: this.confirmPin });
+                                this.clear();
                             } else {
-                                alert('الرمزان غير متطابقان. حاول مرة أخرى.');
+                                alert('الرمزان غير متطابقان.');
                                 this.clear();
                             }
                         }
                     }
                 },
-                clear() {
-                    this.pin = '';
-                    this.confirmPin = '';
-                    this.isConfirming = false;
-                },
+                clear() { this.pin = ''; this.confirmPin = ''; this.isConfirming = false; },
                 backspace() { this.pin = this.pin.slice(0, -1); }
             };
         }
-        // Listen for the setup event globally
-        window.addEventListener('setup-new-pin', (e) => {
-            const mainController = document.querySelector('[x-data]').__x.getUnwrappedDataProxy();
-            mainController.setupNewPIN(e.detail.pin);
-        });
+
+        // Register Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').then(registration => {
+                    console.log('SW registered: ', registration);
+                }).catch(registrationError => {
+                    console.log('SW registration failed: ', registrationError);
+                });
+            });
+        }
     </script>
 </body>
 </html>

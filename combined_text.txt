@@ -1,0 +1,2502 @@
+============================================================
+اسم الملف: index.html
+============================================================
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>تطبيق الملاحظات</title>
+
+    <!-- PWA Manifest and Theme -->
+    <meta name="theme-color" content="#007aff"/>
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="assets/icons/icon-192x192.png">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+
+    <!-- Main Stylesheet -->
+    <link rel="stylesheet" href="app/assets/css/main.css">
+
+    <!-- Alpine.js Core -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
+</head>
+
+<body x-data="appController()" x-init="init()" x-cloak>
+
+    <!-- Splash Screen: Shown during initial asset loading -->
+    <!-- Content is in app/views/partials/splash-screen.html -->
+    <div x-html="splashScreenHtml"></div>
+
+    <!-- PIN Lock Screen: Shown if app is locked -->
+    <!-- Content is in app/views/partials/pin-lock-screen.html -->
+    <div x-show="isLocked" @unlock.window="handleUnlockAttempt($event)" x-html="pinLockScreenHtml"></div>
+    
+    <!-- New User Setup Screen -->
+    <div x-show="isNewUser" x-data="newUserSetupController()" class="pin-lock-screen">
+        <!-- A simplified version of the PIN screen for setup -->
+        <div class="pin-lock-content">
+            <h3>إعداد رمز دخول جديد</h3>
+            <div class="pin-dots">
+                <template x-for="i in 4"><span class="dot" :class="{ 'filled': pin.length >= i }"></span></template>
+            </div>
+            <p x-show="!isConfirming">أدخل الرمز المكون من 4 أرقام</p>
+            <p x-show="isConfirming">أعد إدخال الرمز للتأكيد</p>
+            <div class="keypad">
+                <template x-for="num in [1, 2, 3, 4, 5, 6, 7, 8, 9]"><button @click="append(num)" x-text="num"></button></template>
+                <button class="keypad-icon" @click="clear()"></button>
+                <button @click="append(0)">0</button>
+                <button class="keypad-icon" @click="backspace()"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Application Content: Shown when unlocked -->
+    <main x-show="!isLocked && !isNewUser" class="app-container">
+        <!-- Main Layout: Notes and Calendar views -->
+        <!-- Content is in app/views/layouts/main.html -->
+        <div x-html="mainLayoutHtml"></div>
+
+        <!-- Rich Text Editor Overlay -->
+        <!-- This will be controlled by notesController inside main.html -->
+    </main>
+
+    <!-- === JAVASCRIPT LIBRARIES === -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment-hijri/2.1.2/moment-hijri.min.js"></script>
+
+    <!-- === SERVICES === -->
+    <script src="app/services/CryptoService.js"></script>
+    <script src="app/services/StorageService.js"></script>
+    <script src="app/services/CalendarService.js"></script>
+
+    <!-- === UTILS === -->
+    <script src="app/utils/DateFormatter.js"></script>
+    <script src="app/utils/Validator.js"></script>
+
+    <!-- === MODELS === -->
+    <script src="app/models/Note.js"></script>
+    <script src="app/models/Event.js"></script>
+    <script src="app/models/Settings.js"></script>
+
+    <!-- === CONTROLLERS === -->
+    <script src="app/controllers/AuthController.js"></script>
+    <script src="app/controllers/SettingsController.js"></script>
+    <script src="app/controllers/NoteController.js"></script>
+    <script src="app/controllers/CalendarController.js"></script>
+    
+    <!-- === MAIN APP CONTROLLER === -->
+    <script>
+        function appController() {
+            return {
+                isLoading: true,
+                isLocked: true,
+                isNewUser: false,
+                // --- Partials HTML ---
+                splashScreenHtml: '',
+                pinLockScreenHtml: '',
+                mainLayoutHtml: '',
+                // --- Auth Logic ---
+                ...authController(),
+                // --- Main Init ---
+                async init() {
+                    // Start loading partials and DB in parallel
+                    const partialsPromise = this.loadPartials();
+                    const dbPromise = StorageService.init();
+                    
+                    this.authInit(); // Renamed from init() in authController to avoid conflict
+                    
+                    await Promise.all([partialsPromise, dbPromise]);
+                    
+                    // Hide splash screen after a minimum duration for better UX
+                    setTimeout(() => {
+                        this.isLoading = false;
+                        if (this.isNewUser) {
+                            this.isLocked = false; // Don't show lock screen for new user
+                        }
+                    }, 500);
+                },
+                authInit() { this.init(); }, // Bridge to the original authController.init
+                async loadPartials() {
+                    const [splash, pin, main] = await Promise.all([
+                        fetch('app/views/partials/splash-screen.html').then(res => res.text()),
+                        fetch('app/views/partials/pin-lock-screen.html').then(res => res.text()),
+                        fetch('app/views/layouts/main.html').then(res => res.text())
+                    ]);
+                    this.splashScreenHtml = splash;
+                    this.pinLockScreenHtml = pin;
+                    this.mainLayoutHtml = main;
+                }
+            };
+        }
+
+        function newUserSetupController() {
+            return {
+                pin: '',
+                confirmPin: '',
+                isConfirming: false,
+                append(num) {
+                    if (this.pin.length < 4) this.pin += num;
+                    if (this.pin.length === 4) {
+                        if (!this.isConfirming) {
+                            this.isConfirming = true;
+                            this.confirmPin = this.pin;
+                            this.pin = '';
+                        } else {
+                            if (this.pin === this.confirmPin) {
+                                // Dispatch event to AuthController to finalize setup
+                                window.dispatchEvent(new CustomEvent('setup-new-pin', { detail: { pin: this.pin } }));
+                            } else {
+                                alert('الرمزان غير متطابقان. حاول مرة أخرى.');
+                                this.clear();
+                            }
+                        }
+                    }
+                },
+                clear() {
+                    this.pin = '';
+                    this.confirmPin = '';
+                    this.isConfirming = false;
+                },
+                backspace() { this.pin = this.pin.slice(0, -1); }
+            };
+        }
+        // Listen for the setup event globally
+        window.addEventListener('setup-new-pin', (e) => {
+            const mainController = document.querySelector('[x-data]').__x.getUnwrappedDataProxy();
+            mainController.setupNewPIN(e.detail.pin);
+        });
+    </script>
+</body>
+</html>
+
+
+
+============================================================
+اسم الملف: sw.js
+============================================================
+/**
+ * sw.js - Service Worker
+ *
+ * Implements a "Stale-While-Revalidate" caching strategy for core assets,
+ * and a "Network First" strategy for dynamic data (if any API calls were made).
+ */
+
+const CACHE_NAME = 'notes-app-cache-v1.0'; // Change version to force update
+
+// Assets that are critical for the app's shell to function
+const CORE_ASSETS = [
+    '/',
+    '/index.html',
+    '/app/assets/css/main.css',
+    'https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.wasm',
+    // Add app icons and fonts here
+    'https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap'
+];
+
+// On install, cache all core assets
+self.addEventListener('install', (event) => {
+    console.log('SW: Install event');
+    event.waitUntil(
+        caches.open(CACHE_NAME).then((cache) => {
+            console.log('SW: Caching core assets');
+            return cache.addAll(CORE_ASSETS);
+        })
+    );
+    self.skipWaiting();
+});
+
+// On activate, clean up old caches
+self.addEventListener('activate', (event) => {
+    console.log('SW: Activate event');
+    event.waitUntil(
+        caches.keys().then((cacheNames) => {
+            return Promise.all(
+                cacheNames.map((cacheName) => {
+                    if (cacheName !== CACHE_NAME) {
+                        console.log('SW: Deleting old cache:', cacheName);
+                        return caches.delete(cacheName);
+                    }
+                })
+            );
+        })
+    );
+    return self.clients.claim();
+});
+
+// On fetch, apply the caching strategy
+self.addEventListener('fetch', (event) => {
+    // Only handle GET requests
+    if (event.request.method !== 'GET') {
+        return;
+    }
+
+    const url = new URL(event.request.url);
+
+    // Stale-While-Revalidate for assets we control (and CDNs)
+    if (CORE_ASSETS.includes(url.pathname) || url.hostname.includes('cdn') || url.hostname.includes('googleapis')) {
+        event.respondWith(
+            caches.open(CACHE_NAME).then((cache) => {
+                return cache.match(event.request).then((cachedResponse) => {
+                    const fetchPromise = fetch(event.request).then((networkResponse) => {
+                        // If the fetch is successful, update the cache
+                        cache.put(event.request, networkResponse.clone());
+                        return networkResponse;
+                    });
+
+                    // Return the cached response immediately if available, otherwise wait for the network
+                    return cachedResponse || fetchPromise;
+                });
+            })
+        );
+    } else {
+        // For other requests (e.g., fetching partials), go network first
+        event.respondWith(
+            fetch(event.request).catch(() => {
+                // If network fails, try to find a match in the cache
+                return caches.match(event.request);
+            })
+        );
+    }
+});
+
+
+
+============================================================
+اسم الملف: newfile.py
+============================================================
+import os
+
+def combine_files(output_filename="combined_text.txt"):
+    # تحديد المسار الحالي
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    output_path = os.path.join(root_dir, output_filename)
+    
+    # قائمة المجلدات التي نريد تجاهلها (يمكنك إضافة المزيد هنا)
+    ignore_dirs = {'.git', '__pycache__', 'node_modules', '.idea', 'venv'}
+
+    print(f"جاري تجميع الملفات في: {root_dir}")
+    print(f"سيتم الحفظ في الملف: {output_filename}")
+
+    with open(output_path, 'w', encoding='utf-8') as outfile:
+        for dirpath, dirnames, filenames in os.walk(root_dir):
+            
+            # --- (تعديل مهم) ---
+            # نقوم بتعديل قائمة dirnames مباشرة لتخطي المجلدات المطلوب تجاهلها
+            # هذا يمنع os.walk من الدخول إلى هذه المجلدات فرعياً
+            dirnames[:] = [d for d in dirnames if d not in ignore_dirs]
+            # -------------------
+
+            for filename in filenames:
+                # تجاهل ملف الإخراج نفسه
+                if filename == output_filename:
+                    continue
+                
+                file_path = os.path.join(dirpath, filename)
+                
+                try:
+                    # قراءة المحتوى
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as infile:
+                        content = infile.read()
+                        
+                        relative_path = os.path.relpath(file_path, root_dir)
+                        
+                        # كتابة البيانات
+                        outfile.write(f"{'='*60}\n")
+                        outfile.write(f"اسم الملف: {relative_path}\n")
+                        outfile.write(f"{'='*60}\n")
+                        outfile.write(content)
+                        outfile.write("\n\n")
+                        
+                        print(f"تمت إضافة: {relative_path}")
+                        
+                except Exception as e:
+                    print(f"تخطي الملف (خطأ): {filename}")
+
+    print("\nتمت العملية بنجاح!")
+
+if __name__ == "__main__":
+    combine_files()
+
+============================================================
+اسم الملف: app/views/partials/pin-lock-screen.html
+============================================================
+<!--
+  app/views/partials/pin-lock-screen.html
+
+  The PIN lock screen for user authentication.
+  It provides a secure way for users to enter their PIN without relying on the
+  standard browser keyboard. It manages its own state and dispatches an 'unlock'
+  event when a 4-digit PIN is entered.
+-->
+<div 
+    class="pin-lock-screen" 
+    x-data="pinLockScreen()"
+    x-init="init()"
+    x-show="isLocked"
+    @unlock-failed.window="showError()"
+    x-transition
+>
+    <div class="pin-lock-content">
+        <h3>أدخل رمز الدخول</h3>
+        
+        <!-- Visual feedback for PIN entry -->
+        <div class="pin-dots" :class="{ 'shake': error }">
+            <template x-for="i in 4" :key="i">
+                <span class="dot" :class="{ 'filled': pin.length >= i }"></span>
+            </template>
+        </div>
+
+        <p x-show="error" class="error-message" aria-live="assertive">رمز الدخول غير صحيح. حاول مرة أخرى.</p>
+
+        <!-- Custom numeric keypad -->
+        <div class="keypad">
+            <template x-for="num in [1, 2, 3, 4, 5, 6, 7, 8, 9]">
+                <button @click="append(num)" x-text="num" :aria-label="'رقم ' + num"></button>
+            </template>
+            
+            <!-- The last row of the keypad -->
+            <button class="keypad-icon" @click="clear()" aria-label="مسح الكل">مسح</button>
+            <button @click="append(0)" aria-label="رقم 0">0</button>
+            <button class="keypad-icon" @click="backspace()" aria-label="مسح للخلف">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path><line x1="18" y1="9" x2="12" y2="15"></line><line x1="12" y1="9" x2="18" y2="15"></line></svg>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function pinLockScreen() {
+    return {
+        pin: '',
+        error: false,
+
+        init() {
+            // Listen for physical keyboard events for accessibility and convenience
+            window.addEventListener('keydown', (e) => {
+                if (this.$root.isLocked) {
+                    if (!isNaN(parseInt(e.key))) {
+                        this.append(e.key);
+                    } else if (e.key === 'Backspace') {
+                        this.backspace();
+                    }
+                }
+            });
+        },
+
+        /**
+         * Appends a number to the PIN. If the PIN reaches 4 digits,
+         * it dispatches the 'unlock' event for verification.
+         * @param {string|number} num - The number to append.
+         */
+        append(num) {
+            if (this.pin.length >= 4) return;
+            
+            this.pin += num;
+            this.error = false;
+
+            if (this.pin.length === 4) {
+                this.$dispatch('unlock', { pin: this.pin });
+            }
+        },
+
+        /**
+         * Removes the last digit from the PIN.
+         */
+        backspace() {
+            this.pin = this.pin.slice(0, -1);
+            this.error = false;
+        },
+
+        /**
+         * Clears the entire PIN input.
+         */
+        clear() {
+            this.pin = '';
+            this.error = false;
+        },
+
+        /**
+         * Shows an error state and clears the PIN after a short delay.
+         * This is triggered by the 'unlock-failed' event from the AuthController.
+         */
+        showError() {
+            this.error = true;
+            setTimeout(() => {
+                this.pin = '';
+                this.error = false;
+            }, 800); // Duration should match the CSS shake animation
+        }
+    };
+}
+</script>
+
+
+
+============================================================
+اسم الملف: app/views/partials/splash-screen.html
+============================================================
+<!--
+  app/views/partials/splash-screen.html
+
+  A simple, lightweight splash screen shown on initial app load.
+  It provides immediate feedback to the user while the main application
+  and its resources (like the database) are being initialized.
+  It should contain minimal assets to load instantly.
+-->
+<div 
+    class="splash-screen"
+    x-show="isLoading"
+    x-transition:leave="transition-leave-slow"
+    x-transition:leave-start="transition-leave-start-slow"
+    x-transition:leave-end="transition-leave-end-slow"
+>
+    <!-- You can use an inline SVG for your logo to avoid network requests -->
+    <svg class="logo" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+        <line x1="16" y1="13" x2="8" y2="13"></line>
+        <line x1="16" y1="17" x2="8" y2="17"></line>
+        <polyline points="10 9 9 9 8 9"></polyline>
+    </svg>
+    
+    <p class="loading-text">جاري التحميل...</p>
+</div>
+
+
+============================================================
+اسم الملف: app/views/partials/rich-text-editor.html
+============================================================
+<!--
+  app/views/partials/rich-text-editor.html
+
+  A full-screen overlay for editing a note.
+  It's managed by its own `editorController` and is initialized with a `note` object.
+  It handles UI interactions and dispatches events for 'save' or 'close' actions,
+  leaving the data persistence logic to the main controller.
+-->
+<div 
+    class="editor-overlay" 
+    x-data="editorController(noteToEdit)" 
+    x-init="init()"
+    x-show="isEditing" 
+    @keydown.escape.window="closeEditor()"
+    x-transition:enter="transition-enter"
+    x-transition:enter-start="transition-enter-start"
+    x-transition:enter-end="transition-enter-end"
+    x-transition:leave="transition-leave"
+    x-transition:leave-start="transition-leave-start"
+    x-transition:leave-end="transition-leave-end"
+>
+    <!-- Editor Toolbar -->
+    <div class="editor-toolbar">
+        <button @click="saveNote()" class="button-primary">حفظ</button>
+        <div class="format-buttons">
+            <button @click="format('bold')" aria-label="عريض"><b>B</b></button>
+            <button @click="format('italic')" aria-label="مائل"><i>I</i></button>
+            <button @click="format('insertUnorderedList')" aria-label="قائمة نقطية">●</button>
+            <button @click="format('insertOrderedList')" aria-label="قائمة رقمية">1.</button>
+            <button @click="format('removeFormat')" aria-label="إزالة التنسيق">⌧</button>
+        </div>
+        <button @click="closeEditor()" class="button-secondary">إغلاق</button>
+    </div>
+
+    <!-- Main Editor Area -->
+    <div class="editor-body">
+        <!-- Note Title Input -->
+        <input 
+            type="text" 
+            x-model="note.title" 
+            placeholder="عنوان الملاحظة..." 
+            class="editor-title"
+            aria-label="عنوان الملاحظة"
+        >
+
+        <!-- Rich Text Content Area -->
+        <div 
+            id="rich-text-content" 
+            class="editor-content"
+            contenteditable="true" 
+            role="textbox" 
+            aria-multiline="true"
+            aria-label="محتوى الملاحظة"
+            @input="note.content = $event.target.innerHTML"
+            x-html="note.content"
+        ></div>
+    </div>
+</div>
+
+<script>
+function editorController(note) {
+    return {
+        // The note object passed from the parent controller (e.g., { id: null, title: '', content: '' })
+        note: { ...note },
+
+        init() {
+            // When the editor opens, focus the title field if it's a new note,
+            // or the content field if it's an existing one.
+            this.$nextTick(() => {
+                if (this.note && !this.note.id) {
+                    this.$el.querySelector('.editor-title').focus();
+                } else {
+                    const contentEl = this.$el.querySelector('.editor-content');
+                    contentEl.focus();
+                    // Move cursor to the end of the content
+                    const range = document.createRange();
+                    const sel = window.getSelection();
+                    range.selectNodeContents(contentEl);
+                    range.collapse(false);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                }
+            });
+        },
+
+        /**
+         * Applies a formatting command to the selected text in the editor.
+         * @param {string} command - The command to execute (e.g., 'bold', 'italic').
+         */
+        format(command) {
+            document.execCommand(command, false, null);
+            document.getElementById('rich-text-content').focus();
+        },
+
+        /**
+         * Dispatches an event to the parent controller to save the note.
+         */
+        saveNote() {
+            // Ensure content is synced from the contenteditable div
+            this.note.content = document.getElementById('rich-text-content').innerHTML;
+            if (!this.note.title.trim() && !this.note.content.trim()) {
+                // Don't save empty notes, just close
+                this.closeEditor();
+                return;
+            }
+            this.$dispatch('save-note-request', { note: this.note });
+        },
+
+        /**
+         * Dispatches an event to the parent controller to close the editor.
+         */
+        closeEditor() {
+            this.$dispatch('close-editor-request');
+        }
+    };
+}
+</script>
+
+
+============================================================
+اسم الملف: app/views/partials/event-item.html
+============================================================
+<!--
+  app/views/partials/event-item.html
+
+  This is a partial template for a single event item.
+  It expects an `event` object to be available in its scope.
+  It displays the event's time and title.
+-->
+<article class="event-item">
+    <!-- Event Time -->
+    <div class="event-time">
+        <!-- Display 'All Day' or the specific start time -->
+        <span x-text="event.isAllDay ? 'يوم كامل' : formatTime(event.startTime)"></span>
+    </div>
+
+    <!-- Event Details -->
+    <div class="event-details">
+        <!-- Event Title -->
+        <h4 class="event-title" x-text="event.title"></h4>
+        
+        <!-- Optional: Event Description Snippet -->
+        <p x-show="event.description" class="event-description-snippet" x-text="truncate(event.description, 80)"></p>
+    </div>
+</article>
+
+
+============================================================
+اسم الملف: app/views/partials/note-item.html
+============================================================
+<!--
+  app/views/partials/note-item.html
+
+  This is a partial template for a single note item in the list.
+  It expects a `note` object to be available in its scope.
+  It displays the title, a snippet of the content, and metadata.
+-->
+<article class="note-item" :class="{ 'is-favorite': note.isFavorite }">
+    <!-- Note Title -->
+    <h3 class="note-title" x-text="note.title || 'ملاحظة بلا عنوان'"></h3>
+
+    <!-- Note Content Snippet -->
+    <!-- We strip HTML for the preview and truncate the text -->
+    <p class="note-snippet" x-text="truncate(stripHtml(note.content), 100)"></p>
+
+    <!-- Metadata -->
+    <div class="note-meta">
+        <!-- Last Updated Date -->
+        <span class="note-date" x-text="formatDate(note.updatedAt)"></span>
+        
+        <!-- Favorite Indicator -->
+        <span x-show="note.isFavorite" class="favorite-icon" aria-label="مفضلة">
+            ⭐
+        </span>
+    </div>
+</article>
+
+
+============================================================
+اسم الملف: app/views/layouts/main.html
+============================================================
+<!--
+  app/views/layouts/main.html
+
+  This is the main layout of the application after the user is authenticated.
+  It contains the primary header, navigation (tabs for notes/calendar),
+  and the content area that will be populated with data by its controller.
+  It's managed by a main `appViewController`.
+-->
+<div x-data="appViewController" x-init="init()" class="app-container">
+    <!-- Main Header -->
+    <header class="main-header">
+        <h1 x-text="activeTab === 'notes' ? 'ملاحظاتي' : 'التقويم'"></h1>
+        <div class="header-actions">
+            <!-- Search button can be a toggle for a search bar -->
+            <button @click="toggleSearch()" aria-label="بحث">
+                <!-- Use an SVG icon for search -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Optional Search Bar (toggled by the button above) -->
+    <div x-show="isSearchVisible" class="search-bar-container">
+        <input type="search" x-model="searchQuery" placeholder="ابحث في الملاحظات..." @input.debounce.300ms="filterNotes()">
+    </div>
+
+    <!-- Tab Navigation -->
+    <nav class="tab-nav">
+        <button @click="switchTab('notes')" :class="{ 'active': activeTab === 'notes' }">
+            الملاحظات
+        </button>
+        <button @click="switchTab('calendar')" :class="{ 'active': activeTab === 'calendar' }">
+            التقويم
+        </button>
+    </nav>
+
+    <!-- Content Area: Displays content based on the active tab -->
+    <div class="content-area">
+        <!-- Notes View -->
+        <div x-show="activeTab === 'notes'" x-transition>
+            <!-- This part will be controlled by notesController -->
+            <div x-data="notesController" x-init="loadNotes()">
+                <!-- Loading State -->
+                <div x-show="isLoading" class="loading-indicator">
+                    <p>جاري تحميل الملاحظات...</p>
+                </div>
+
+                <!-- Empty State -->
+                <div x-show="!isLoading && notes.length === 0" class="empty-state">
+                    <p>لا توجد ملاحظات حتى الآن.</p>
+                    <span>اضغط على زر "+" لبدء إضافة ملاحظة جديدة.</span>
+                </div>
+
+                <!-- Notes List -->
+                <ul x-show="!isLoading && notes.length > 0" class="notes-list">
+                    <template x-for="note in filteredNotes" :key="note.id">
+                        <!-- The content of note-item.html will be rendered here -->
+                        <!-- We pass the 'note' object to the partial -->
+                        <li x-data="{ note: note }" x-init="$el.innerHTML = await renderPartial('app/views/partials/note-item.html', { note: note })" @click="editNote(note.id)">
+                            <!-- The partial will be dynamically loaded here -->
+                        </li>
+                    </template>
+                </ul>
+
+                <!-- Floating Action Button to add a new note -->
+                <button @click="createNewNote()" class="fab" aria-label="إضافة ملاحظة جديدة">+</button>
+            </div>
+        </div>
+
+        <!-- Calendar View -->
+        <div x-show="activeTab === 'calendar'" x-transition>
+            <!-- This part will be controlled by calendarController -->
+            <div x-data="calendarController" x-init="initCalendar()">
+                <!-- Calendar UI and event list will go here -->
+                <p>واجهة التقويم ستكون هنا.</p>
+                <!-- Example of where event items would go -->
+                <ul>
+                    <template x-for="event in events" :key="event.id">
+                        <!-- The content of event-item.html will be rendered here -->
+                        <li x-data="{ event: event }" x-init="$el.innerHTML = await renderPartial('app/views/partials/event-item.html', { event: event })">
+                            <!-- The partial will be dynamically loaded here -->
+                        </li>
+                    </template>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+============================================================
+اسم الملف: app/assets/css/main.css
+============================================================
+/**
+ * app/assets/css/main.css
+ *
+ * Main stylesheet for the application.
+ * - Mobile-first design
+ * - Dark mode support
+ * - RTL layout by default
+ * - Uses CSS variables for theming
+ */
+
+/* 1. CSS Variables and Root Styles
+----------------------------------------------------------------*/
+:root {
+    --font-family: 'Tajawal', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    
+    /* Light Theme */
+    --bg-primary: #f7f8fa;
+    --bg-secondary: #ffffff;
+    --text-primary: #1a1a1a;
+    --text-secondary: #5c5c5c;
+    --border-color: #e5e7eb;
+    --accent-color: #007aff;
+    --accent-text: #ffffff;
+    --danger-color: #ff3b30;
+
+    /* Transitions */
+    --transition-fast: all 0.2s ease-in-out;
+    --transition-slow: all 0.4s ease-in-out;
+}
+
+/* Dark Theme */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-primary: #000000;
+        --bg-secondary: #1c1c1e;
+        --text-primary: #ffffff;
+        --text-secondary: #8e8e93;
+        --border-color: #3a3a3c;
+        --accent-color: #0a84ff;
+        --danger-color: #ff453a;
+    }
+}
+
+/* 2. Base and Layout
+----------------------------------------------------------------*/
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html {
+    font-family: var(--font-family);
+    direction: rtl;
+    text-align: right;
+}
+
+body {
+    margin: 0;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 16px;
+    overscroll-behavior-y: contain;
+}
+
+.app-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+/* 3. Components
+----------------------------------------------------------------*/
+
+/* --- Splash Screen --- */
+.splash-screen {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--bg-primary);
+    z-index: 100;
+}
+.splash-screen .logo {
+    color: var(--accent-color);
+}
+.splash-screen .loading-text {
+    margin-top: 1rem;
+    color: var(--text-secondary);
+}
+
+/* --- PIN Lock Screen --- */
+.pin-lock-screen {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--bg-primary);
+    z-index: 90;
+}
+.pin-lock-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+}
+.pin-dots {
+    display: flex;
+    gap: 1rem;
+    transition: transform 0.2s ease;
+}
+.pin-dots.shake {
+    animation: shake 0.5s ease-in-out;
+}
+.pin-dots .dot {
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    background-color: var(--border-color);
+    transition: var(--transition-fast);
+}
+.pin-dots .dot.filled {
+    background-color: var(--accent-color);
+}
+.keypad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+}
+.keypad button {
+    width: 4.5rem;
+    height: 4.5rem;
+    border-radius: 50%;
+    border: none;
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 1.5rem;
+    font-weight: 500;
+    cursor: pointer;
+}
+.keypad button:active {
+    background-color: var(--border-color);
+}
+.keypad .keypad-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.keypad .keypad-icon svg {
+    width: 1.75rem;
+    height: 1.75rem;
+    color: var(--text-secondary);
+}
+.error-message {
+    color: var(--danger-color);
+    font-size: 0.9rem;
+    height: 1rem;
+}
+
+/* --- Main Header --- */
+.main-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+.main-header h1 {
+    font-size: 2rem;
+    font-weight: 800;
+    margin: 0;
+}
+
+/* --- Notes List --- */
+.notes-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 0.75rem;
+}
+.notes-list li {
+    background-color: var(--bg-secondary);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    cursor: pointer;
+    transition: var(--transition-fast);
+    border: 1px solid var(--border-color);
+}
+.notes-list li:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+.note-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0 0 0.5rem 0;
+    color: var(--text-primary);
+}
+.note-snippet {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.5;
+}
+.note-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+/* --- Rich Text Editor --- */
+.editor-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: var(--bg-primary);
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    padding: 1rem;
+}
+.editor-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 1rem;
+}
+.editor-toolbar .format-buttons {
+    display: flex;
+    gap: 0.5rem;
+}
+.editor-toolbar button {
+    background: none;
+    border: none;
+    color: var(--accent-color);
+    cursor: pointer;
+    padding: 0.5rem;
+    font-size: 1rem;
+}
+.editor-toolbar .format-buttons button {
+    width: 2.5rem;
+    height: 2.5rem;
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+    border-radius: 0.5rem;
+}
+.editor-body {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+}
+.editor-title {
+    width: 100%;
+    border: none;
+    background: none;
+    font-size: 1.5rem;
+    font-weight: 700;
+    padding: 0.5rem 0;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+}
+.editor-title:focus {
+    outline: none;
+}
+.editor-content {
+    flex-grow: 1;
+    font-size: 1.1rem;
+    line-height: 1.7;
+    color: var(--text-primary);
+    overflow-y: auto;
+}
+.editor-content:focus {
+    outline: none;
+}
+
+/* --- Floating Action Button (FAB) --- */
+.fab {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 1.5rem;
+    width: 3.5rem;
+    height: 3.5rem;
+    border-radius: 50%;
+    background-color: var(--accent-color);
+    color: var(--accent-text);
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    cursor: pointer;
+    z-index: 40;
+}
+
+/* 4. Animations and Transitions
+----------------------------------------------------------------*/
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+
+[x-cloak] {
+    display: none !important;
+}
+
+.transition-enter { transition: opacity 0.3s ease; }
+.transition-enter-start { opacity: 0; }
+.transition-enter-end { opacity: 1; }
+.transition-leave { transition: opacity 0.3s ease; }
+.transition-leave-start { opacity: 1; }
+.transition-leave-end { opacity: 0; }
+
+
+============================================================
+اسم الملف: app/services/CalendarService.js
+============================================================
+/**
+ * app/services/CalendarService.js
+ *
+ * A stateless service for handling complex date and calendar-related logic,
+ * primarily conversions between Gregorian and Hijri calendars.
+ * It relies on the moment-hijri library.
+ */
+const CalendarService = {
+
+    /**
+     * Converts a Gregorian date to its Hijri equivalent.
+     * @param {Date|number} gregorianDate - A Date object or Unix timestamp.
+     * @returns {{hYear: number, hMonth: number, hDay: number, hMonthName: string}} Hijri date components.
+     */
+    toHijri(gregorianDate) {
+        const m = moment(gregorianDate);
+        return {
+            hYear: m.iYear(),
+            hMonth: m.iMonth() + 1, // moment-hijri months are 0-indexed
+            hDay: m.iDate(),
+            hMonthName: m.format('iMMMM') // e.g., 'رمضان'
+        };
+    },
+
+    /**
+     * Converts a Hijri date to its Gregorian equivalent.
+     * @param {number} hYear - The Hijri year.
+     * @param {number} hMonth - The Hijri month (1-12).
+     * @param {number} hDay - The Hijri day.
+     * @returns {Date} The corresponding Gregorian Date object.
+     */
+    toGregorian(hYear, hMonth, hDay) {
+        // moment-hijri months are 0-indexed, so we subtract 1
+        return moment(`${hYear}/${hMonth}/${hDay}`, 'iYYYY/iM/iD').toDate();
+    },
+
+    /**
+     * Gets the number of days in a specific Hijri month.
+     * @param {number} hYear - The Hijri year.
+     * @param {number} hMonth - The Hijri month (1-12).
+     * @returns {number} The number of days in that month (29 or 30).
+     */
+    daysInHijriMonth(hYear, hMonth) {
+        return moment(`${hYear}/${hMonth}`, 'iYYYY/iM').iDaysInMonth();
+    },
+
+    /**
+     * Formats a date object to show both Gregorian and Hijri dates.
+     * @param {Date|number} date - The date to format.
+     * @returns {string} A formatted string, e.g., "11 فبراير 2026 / 14 رجب 1447".
+     */
+    formatDualCalendar(date) {
+        const m = moment(date);
+        const gregorianPart = m.locale('ar-eg').format('D MMMM YYYY');
+        const hijriPart = m.format('iD iMMMM iYYYY');
+        return `${gregorianPart} / ${hijriPart}`;
+    }
+};
+
+
+============================================================
+اسم الملف: app/services/StorageService.js
+============================================================
+/**
+ * app/services/StorageService.js
+ *
+ * Manages the SQLite database persistence layer.
+ * - Initializes sql.js (WebAssembly).
+ * - Loads the database from IndexedDB on startup.
+ * - Saves the database back to IndexedDB after every modification.
+ * - Provides simple methods (`query`, `execute`) for models to interact with the DB.
+ */
+const StorageService = {
+    db: null,
+    dbName: 'app_database',
+    dbStoreName: 'database_file',
+    isInitialized: false,
+    isSaving: false,
+    saveQueue: false,
+
+    /**
+     * Initializes the database. Must be called once after the app starts.
+     * It loads sql.js, retrieves the DB file from IndexedDB, or creates a new one.
+     * @returns {Promise<void>}
+     */
+    async init() {
+        if (this.isInitialized) return;
+
+        try {
+            // Initialize sql.js library
+            const SQL = await initSqlJs({
+                locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${file}`
+            });
+
+            // Load the database file from IndexedDB
+            const dbFile = await this.loadDbFromIndexedDB();
+
+            if (dbFile) {
+                console.log("StorageService: Loading existing database from IndexedDB.");
+                this.db = new SQL.Database(dbFile);
+            } else {
+                console.log("StorageService: No existing database found. Creating a new one.");
+                this.db = new SQL.Database();
+                await this.createSchema(); // Create tables only if DB is new
+            }
+
+            this.isInitialized = true;
+            console.log("StorageService: Database initialized successfully.");
+
+        } catch (error) {
+            console.error("StorageService: Initialization failed.", error);
+            this.isInitialized = false;
+        }
+    },
+
+    /**
+     * Executes a query that returns data (e.g., SELECT).
+     * @param {string} sql - The SQL query string.
+     * @param {Array<any>} [params=[]] - Parameters for prepared statements.
+     * @returns {Promise<Array<object>>} An array of result objects.
+     */
+    async query(sql, params = []) {
+        if (!this.isInitialized) throw new Error("Database not initialized.");
+        const results = this.db.exec(sql, params);
+        if (results.length === 0) return [];
+
+        // Convert the raw result into a more usable array of objects
+        const columns = results[0].columns;
+        return results[0].values.map(row => {
+            const obj = {};
+            columns.forEach((col, i) => { obj[col] = row[i]; });
+            return obj;
+        });
+    },
+
+    /**
+     * Executes a command that modifies data (e.g., INSERT, UPDATE, DELETE).
+     * @param {string} sql - The SQL command string.
+     * @param {Array<any>} [params=[]] - Parameters for prepared statements.
+     * @returns {Promise<void>}
+     */
+    async execute(sql, params = []) {
+        if (!this.isInitialized) throw new Error("Database not initialized.");
+        this.db.run(sql, params);
+        // After every modification, trigger a save to IndexedDB
+        await this.scheduleSave();
+    },
+
+    /**
+     * Schedules a save operation to prevent multiple rapid saves.
+     * @private
+     */
+    async scheduleSave() {
+        if (this.isSaving) {
+            this.saveQueue = true;
+            return;
+        }
+        this.isSaving = true;
+        await this.saveDbToIndexedDB();
+        this.isSaving = false;
+        if (this.saveQueue) {
+            this.saveQueue = false;
+            await this.scheduleSave();
+        }
+    },
+
+    /**
+     * Saves the current state of the database to IndexedDB.
+     * @private
+     */
+    async saveDbToIndexedDB() {
+        return new Promise((resolve, reject) => {
+            const dbData = this.db.export();
+            const request = indexedDB.open(this.dbName, 1);
+
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(this.dbStoreName)) {
+                    db.createObjectStore(this.dbStoreName);
+                }
+            };
+
+            request.onsuccess = (event) => {
+                const db = event.target.result;
+                const transaction = db.transaction([this.dbStoreName], 'readwrite');
+                const store = transaction.objectStore(this.dbStoreName);
+                store.put(dbData, 'db_file');
+                transaction.oncomplete = () => {
+                    console.log("StorageService: Database saved to IndexedDB.");
+                    resolve();
+                };
+                transaction.onerror = (err) => reject(err);
+            };
+            request.onerror = (err) => reject(err);
+        });
+    },
+
+    /**
+     * Loads the database file from IndexedDB.
+     * @private
+     * @returns {Promise<Uint8Array|null>} The database file as a byte array, or null if not found.
+     */
+    async loadDbFromIndexedDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, 1);
+
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(this.dbStoreName)) {
+                    db.createObjectStore(this.dbStoreName);
+                }
+            };
+
+            request.onsuccess = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(this.dbStoreName)) {
+                    resolve(null); // Store doesn't exist yet
+                    return;
+                }
+                const transaction = db.transaction([this.dbStoreName], 'readonly');
+                const store = transaction.objectStore(this.dbStoreName);
+                const getRequest = store.get('db_file');
+                getRequest.onsuccess = () => resolve(getRequest.result || null);
+                getRequest.onerror = (err) => reject(err);
+            };
+            request.onerror = (err) => reject(err);
+        });
+    },
+
+    /**
+     * Creates the initial database schema if the database is new.
+     * @private
+     */
+    async createSchema() {
+        const schema = `
+            CREATE TABLE IF NOT EXISTS notes (
+                id TEXT PRIMARY KEY,
+                title_encrypted TEXT,
+                content_encrypted TEXT,
+                created_at INTEGER,
+                updated_at INTEGER,
+                tags_encrypted TEXT,
+                is_favorite INTEGER DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at);
+
+            CREATE TABLE IF NOT EXISTS events (
+                id TEXT PRIMARY KEY,
+                title_encrypted TEXT NOT NULL,
+                description_encrypted TEXT,
+                start_time INTEGER NOT NULL,
+                end_time INTEGER,
+                is_all_day INTEGER DEFAULT 0,
+                calendar_type TEXT NOT NULL,
+                rrule_encrypted TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_events_start_time ON events(start_time);
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        `;
+        await this.execute(schema);
+        console.log("StorageService: Database schema created.");
+    }
+};
+
+
+============================================================
+اسم الملف: app/services/CryptoService.js
+============================================================
+/**
+ * app/services/CryptoService.js
+ *
+ * A stateless service providing all necessary cryptographic functions.
+ * It uses the browser's native Web Crypto API for secure and performant operations.
+ * This service is the foundation of the app's security model.
+ */
+const CryptoService = {
+
+    /**
+     * Derives a strong 256-bit AES-GCM key from a user's PIN and a salt.
+     * Uses PBKDF2 to make the key resistant to brute-force attacks.
+     * @param {string} pin - The user's PIN.
+     * @param {Uint8Array} salt - A unique, per-user salt.
+     * @returns {Promise<CryptoKey>} A CryptoKey suitable for encryption and decryption.
+     */
+    async deriveKeyFromPIN(pin, salt) {
+        const encoder = new TextEncoder();
+        const keyMaterial = await window.crypto.subtle.importKey(
+            'raw',
+            encoder.encode(pin),
+            { name: 'PBKDF2' },
+            false,
+            ['deriveKey']
+        );
+
+        return window.crypto.subtle.deriveKey(
+            {
+                name: 'PBKDF2',
+                salt: salt,
+                iterations: 200000, // Increased iterations for stronger security
+                hash: 'SHA-256'
+            },
+            keyMaterial,
+            { name: 'AES-GCM', length: 256 },
+            true,
+            ['encrypt', 'decrypt']
+        );
+    },
+
+    /**
+     * Encrypts a string of data using a provided CryptoKey.
+     * @param {string} data - The plaintext data to encrypt.
+     * @param {CryptoKey} key - The AES-GCM key derived from the user's PIN.
+     * @returns {Promise<string>} A Base64 encoded string containing the IV and encrypted data.
+     */
+    async encrypt(data, key) {
+        const encoder = new TextEncoder();
+        const iv = window.crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV is standard for AES-GCM
+
+        const encryptedData = await window.crypto.subtle.encrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv
+            },
+            key,
+            encoder.encode(data)
+        );
+
+        // Prepend the IV to the encrypted data for use during decryption
+        const combined = new Uint8Array(iv.length + encryptedData.byteLength);
+        combined.set(iv);
+        combined.set(new Uint8Array(encryptedData), iv.length);
+
+        // Convert the combined buffer to a Base64 string for easy storage
+        return btoa(String.fromCharCode.apply(null, combined));
+    },
+
+    /**
+     * Decrypts a Base64 encoded string using a provided CryptoKey.
+     * @param {string} encryptedBase64 - The Base64 string from the encrypt function.
+     * @param {CryptoKey} key - The AES-GCM key used for the original encryption.
+     * @returns {Promise<string|null>} The decrypted plaintext string, or null if decryption fails.
+     */
+    async decrypt(encryptedBase64, key) {
+        try {
+            // Decode the Base64 string back to a byte array
+            const combined = new Uint8Array(atob(encryptedBase64).split('').map(c => c.charCodeAt(0)));
+
+            // Extract the IV and the encrypted data
+            const iv = combined.slice(0, 12);
+            const data = combined.slice(12);
+
+            const decryptedData = await window.crypto.subtle.decrypt(
+                {
+                    name: 'AES-GCM',
+                    iv: iv
+                },
+                key,
+                data
+            );
+
+            const decoder = new TextDecoder();
+            return decoder.decode(decryptedData);
+        } catch (error) {
+            console.error("Decryption failed. This could be due to an incorrect PIN or corrupted data.", error);
+            return null; // Critical: Return null on any decryption error.
+        }
+    },
+
+    /**
+     * Generates a new, cryptographically secure salt.
+     * @returns {Uint8Array} A 16-byte random salt.
+     */
+    generateSalt() {
+        return window.crypto.getRandomValues(new Uint8Array(16));
+    }
+};
+
+
+
+============================================================
+اسم الملف: app/models/Settings.js
+============================================================
+/**
+ * app/models/Settings.js
+ * 
+ * A simple key-value store model for managing application settings.
+ * This model interacts with the 'settings' table in the database.
+ * It's designed for non-sensitive data. For sensitive settings,
+ * values should be encrypted before being passed to this model.
+ */
+const Settings = {
+
+    /**
+     * Retrieves a value for a given key.
+     * @param {string} key - The key of the setting to retrieve.
+     * @param {any} defaultValue - The value to return if the key is not found.
+     * @returns {Promise<any>} The value of the setting, or the default value.
+     */
+    async get(key, defaultValue = null) {
+        const sql = "SELECT value FROM settings WHERE key = ?";
+        const rows = await StorageService.query(sql, [key]);
+
+        if (rows.length === 0) {
+            return defaultValue;
+        }
+        
+        // Values are stored as JSON strings to support various data types
+        return JSON.parse(rows[0].value);
+    },
+
+    /**
+     * Sets a value for a given key. This performs an "upsert" (update or insert).
+     * @param {string} key - The key of the setting to set.
+     * @param {any} value - The value to store. It will be JSON.stringified.
+     * @returns {Promise<void>}
+     */
+    async set(key, value) {
+        const jsonValue = JSON.stringify(value);
+        
+        // Using REPLACE INTO is a concise way to handle upserts in SQLite
+        const sql = "REPLACE INTO settings (key, value) VALUES (?, ?)";
+        
+        await StorageService.execute(sql, [key, jsonValue]);
+    },
+
+    /**
+     * Retrieves all settings as a single object.
+     * @returns {Promise<object>} An object containing all settings.
+     */
+    async getAll() {
+        const sql = "SELECT key, value FROM settings";
+        const rows = await StorageService.query(sql);
+        
+        const settings = {};
+        for (const row of rows) {
+            settings[row.key] = JSON.parse(row.value);
+        }
+        return settings;
+    }
+};
+
+
+============================================================
+اسم الملف: app/models/Event.js
+============================================================
+/**
+ * app/models/Event.js
+ * 
+ * The Model for managing calendar events. It handles all CRUD operations for events,
+ * encrypting sensitive fields and interacting with the StorageService.
+ * It also manages queries for fetching events within a specific date range.
+ */
+const Event = {
+
+    /**
+     * Creates a new event and saves it to the database.
+     * @param {object} eventData - The event data.
+     * @param {CryptoKey} masterKey - The master key for encryption.
+     * @returns {Promise<object>} The newly created event object.
+     */
+    async create(eventData, masterKey) {
+        const { title, description = '', startTime, endTime, isAllDay = false, calendarType, rrule = null } = eventData;
+        const id = crypto.randomUUID();
+
+        const encryptedTitle = await CryptoService.encrypt(title, masterKey);
+        const encryptedDescription = await CryptoService.encrypt(description, masterKey);
+        const encryptedRrule = rrule ? await CryptoService.encrypt(rrule, masterKey) : null;
+
+        const sql = `
+            INSERT INTO events (id, title_encrypted, description_encrypted, start_time, end_time, is_all_day, calendar_type, rrule_encrypted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        
+        const params = [id, encryptedTitle, encryptedDescription, startTime, endTime, isAllDay ? 1 : 0, calendarType, encryptedRrule];
+        
+        await StorageService.execute(sql, params);
+        return { id, ...eventData };
+    },
+
+    /**
+     * Finds events within a given date range.
+     * @param {number} startDate - The start of the range (Unix Timestamp).
+     * @param {number} endDate - The end of the range (Unix Timestamp).
+     * @param {CryptoKey} masterKey - The master key for decryption.
+     * @returns {Promise<Array<object>>} An array of event objects in the range.
+     */
+    async findByDateRange(startDate, endDate, masterKey) {
+        const sql = `
+            SELECT * FROM events 
+            WHERE start_time >= ? AND start_time <= ? 
+            ORDER BY start_time ASC
+        `;
+        const rows = await StorageService.query(sql, [startDate, endDate]);
+        return Promise.all(rows.map(row => this.decryptRow(row, masterKey)));
+    },
+    
+    /**
+     * Updates an existing event.
+     * @param {string} id - The ID of the event to update.
+     * @param {object} updatedData - The new data for the event.
+     * @param {CryptoKey} masterKey - The master key for encryption.
+     * @returns {Promise<void>}
+     */
+    async update(id, updatedData, masterKey) {
+        const { title, description, startTime, endTime, isAllDay, calendarType, rrule } = updatedData;
+
+        const encryptedTitle = await CryptoService.encrypt(title, masterKey);
+        const encryptedDescription = await CryptoService.encrypt(description, masterKey);
+        const encryptedRrule = rrule ? await CryptoService.encrypt(rrule, masterKey) : null;
+
+        const sql = `
+            UPDATE events
+            SET title_encrypted = ?, description_encrypted = ?, start_time = ?, end_time = ?, 
+                is_all_day = ?, calendar_type = ?, rrule_encrypted = ?
+            WHERE id = ?
+        `;
+        
+        const params = [encryptedTitle, encryptedDescription, startTime, endTime, isAllDay ? 1 : 0, calendarType, encryptedRrule, id];
+        
+        await StorageService.execute(sql, params);
+    },
+
+    /**
+     * Deletes an event from the database.
+     * @param {string} id - The ID of the event to delete.
+     * @returns {Promise<void>}
+     */
+    async delete(id) {
+        const sql = "DELETE FROM events WHERE id = ?";
+        await StorageService.execute(sql, [id]);
+    },
+
+    /**
+     * Helper function to decrypt a single database row into a clean event object.
+     * @param {object} row - The raw row object from StorageService.
+     * @param {CryptoKey} masterKey - The master key for decryption.
+     * @returns {Promise<object>} The decrypted and formatted event object.
+     * @private
+     */
+    async decryptRow(row, masterKey) {
+        const [title, description, rrule] = await Promise.all([
+            CryptoService.decrypt(row.title_encrypted, masterKey),
+            CryptoService.decrypt(row.description_encrypted, masterKey),
+            row.rrule_encrypted ? CryptoService.decrypt(row.rrule_encrypted, masterKey) : Promise.resolve(null)
+        ]);
+
+        return {
+            id: row.id,
+            title,
+            description,
+            startTime: row.start_time,
+            endTime: row.end_time,
+            isAllDay: row.is_all_day === 1,
+            calendarType: row.calendar_type,
+            rrule
+        };
+    }
+};
+
+
+============================================================
+اسم الملف: app/models/Note.js
+============================================================
+/**
+ * app/models/Note.js
+ * 
+ * The Model for managing notes. It is responsible for all CRUD (Create, Read, Update, Delete)
+ * operations related to notes. It interacts with the StorageService to persist data
+ * and the CryptoService to ensure note content and titles are always encrypted at rest.
+ * 
+ * This model knows NOTHING about the UI. It only deals with data.
+ */
+const Note = {
+
+    /**
+     * Creates a new note, encrypts its data, and saves it to the database.
+     * @param {object} noteData - The note data ({ title, content, tags, is_favorite }).
+     * @param {CryptoKey} masterKey - The master key for encryption.
+     * @returns {Promise<object>} The newly created note object (decrypted).
+     */
+    async create(noteData, masterKey) {
+        const { title, content, tags = [], is_favorite = false } = noteData;
+        const id = crypto.randomUUID();
+        const now = Date.now();
+
+        // Encrypt all user-provided fields
+        const encryptedTitle = await CryptoService.encrypt(title || '', masterKey);
+        const encryptedContent = await CryptoService.encrypt(content || '', masterKey);
+        const encryptedTags = await CryptoService.encrypt(JSON.stringify(tags), masterKey);
+
+        const sql = `
+            INSERT INTO notes (id, title_encrypted, content_encrypted, created_at, updated_at, tags_encrypted, is_favorite)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `;
+        
+        const params = [id, encryptedTitle, encryptedContent, now, now, encryptedTags, is_favorite ? 1 : 0];
+        
+        await StorageService.execute(sql, params);
+        
+        return { id, title, content, tags, is_favorite, createdAt: now, updatedAt: now };
+    },
+
+    /**
+     * Retrieves all notes from the database and decrypts them.
+     * @param {CryptoKey} masterKey - The master key for decryption.
+     * @returns {Promise<Array<object>>} An array of all note objects.
+     */
+    async findAll(masterKey) {
+        const rows = await StorageService.query("SELECT * FROM notes ORDER BY updated_at DESC");
+        
+        // Use Promise.all for efficient, parallel decryption
+        return Promise.all(rows.map(row => this.decryptRow(row, masterKey)));
+    },
+
+    /**
+     * Finds a single note by its ID and decrypts it.
+     * @param {string} id - The UUID of the note.
+     * @param {CryptoKey} masterKey - The master key for decryption.
+     * @returns {Promise<object|null>} The decrypted note object, or null if not found.
+     */
+    async findById(id, masterKey) {
+        const rows = await StorageService.query("SELECT * FROM notes WHERE id = ?", [id]);
+        if (rows.length === 0) {
+            return null;
+        }
+        return this.decryptRow(rows[0], masterKey);
+    },
+
+    /**
+     * Updates an existing note.
+     * @param {string} id - The ID of the note to update.
+     * @param {object} updatedData - The new data for the note ({ title, content, tags, is_favorite }).
+     * @param {CryptoKey} masterKey - The master key for encryption.
+     * @returns {Promise<void>}
+     */
+    async update(id, updatedData, masterKey) {
+        const { title, content, tags, is_favorite } = updatedData;
+        const now = Date.now();
+
+        const encryptedTitle = await CryptoService.encrypt(title, masterKey);
+        const encryptedContent = await CryptoService.encrypt(content, masterKey);
+        const encryptedTags = await CryptoService.encrypt(JSON.stringify(tags), masterKey);
+
+        const sql = `
+            UPDATE notes
+            SET title_encrypted = ?, content_encrypted = ?, updated_at = ?, tags_encrypted = ?, is_favorite = ?
+            WHERE id = ?
+        `;
+        
+        const params = [encryptedTitle, encryptedContent, now, encryptedTags, is_favorite ? 1 : 0, id];
+        
+        await StorageService.execute(sql, params);
+    },
+
+    /**
+     * Deletes a note from the database.
+     * @param {string} id - The ID of the note to delete.
+     * @returns {Promise<void>}
+     */
+    async delete(id) {
+        const sql = "DELETE FROM notes WHERE id = ?";
+        await StorageService.execute(sql, [id]);
+    },
+
+    /**
+     * Helper function to decrypt a single database row into a clean note object.
+     * @param {object} row - The raw row object from StorageService.
+     * @param {CryptoKey} masterKey - The master key for decryption.
+     * @returns {Promise<object>} The decrypted and formatted note object.
+     * @private
+     */
+    async decryptRow(row, masterKey) {
+        // Decrypt fields in parallel for better performance
+        const [title, content, tags] = await Promise.all([
+            CryptoService.decrypt(row.title_encrypted, masterKey),
+            CryptoService.decrypt(row.content_encrypted, masterKey),
+            CryptoService.decrypt(row.tags_encrypted, masterKey).then(JSON.parse)
+        ]);
+
+        return {
+            id: row.id,
+            title,
+            content,
+            tags,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            isFavorite: row.is_favorite === 1
+        };
+    }
+};
+
+
+============================================================
+اسم الملف: app/controllers/SettingsController.js
+============================================================
+/**
+ * app/controllers/SettingsController.js
+ *
+ * Manages the application's settings page and high-level operations like
+ * data backup and restoration.
+ */
+function settingsController() {
+    return {
+        // --- State ---
+        masterKey: null,
+        isImporting: false, // Controls UI for the import process
+        importPIN: '',      // PIN for decrypting the backup file
+
+        // --- Initialization ---
+        init() {
+            // This controller needs the master key to perform its functions.
+            window.addEventListener('app-unlocked', (event) => {
+                if (!this.masterKey) {
+                    this.masterKey = event.detail.masterKey;
+                }
+            });
+        },
+
+        // --- Actions ---
+
+        /**
+         * Exports all user data into a single, encrypted backup file.
+         */
+        async exportData() {
+            if (!this.masterKey) {
+                alert('خطأ: يجب فتح قفل التطبيق أولاً.');
+                return;
+            }
+            console.log('Settings: Starting data export...');
+
+            try {
+                // 1. Gather all raw (but already encrypted) data from the database
+                const notes = await StorageService.query("SELECT * FROM notes");
+                const events = await StorageService.query("SELECT * FROM events");
+                
+                // 2. Gather the security credentials
+                const salt = localStorage.getItem('user_salt');
+                const verificationData = localStorage.getItem('verification_data');
+
+                // 3. Assemble the backup object
+                const backupObject = {
+                    version: 1,
+                    exportedAt: Date.now(),
+                    salt: salt,
+                    verificationData: verificationData,
+                    data: {
+                        notes: notes,
+                        events: events
+                    }
+                };
+
+                // 4. Stringify and re-encrypt the entire backup object for an extra layer of security
+                const backupJson = JSON.stringify(backupObject);
+                const encryptedBackup = await CryptoService.encrypt(backupJson, this.masterKey);
+
+                // 5. Trigger file download
+                const blob = new Blob([encryptedBackup], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `backup-${new Date().toISOString().split('T')[0]}.json.enc`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                alert('تم تصدير النسخة الاحتياطية بنجاح.');
+            } catch (error) {
+                console.error('Settings: Export failed:', error);
+                alert('فشل تصدير النسخة الاحتياطية.');
+            }
+        },
+
+        /**
+         * Initiates the import process by handling the selected file.
+         * @param {File} file - The backup file selected by the user.
+         * @param {string} pin - The PIN associated with the backup file.
+         */
+        async importData(file, pin) {
+            if (!file || !pin || pin.length !== 4) {
+                alert('الرجاء اختيار ملف وإدخال رمز الدخول (4 أرقام) الخاص بالنسخة الاحتياطية.');
+                return;
+            }
+
+            if (!confirm('تحذير: سيتم حذف جميع البيانات الحالية واستبدالها ببيانات النسخة الاحتياطية. هذه العملية لا يمكن التراجع عنها. هل أنت متأكد؟')) {
+                return;
+            }
+
+            try {
+                const encryptedBackup = await file.text();
+                
+                // 1. We need the salt from the backup file to derive the correct key.
+                // This is a challenge. A robust solution would be to store the salt unencrypted
+                // alongside the encrypted data in the backup file. For this implementation, we'll
+                // temporarily parse the JSON to get the salt, which is not ideal but works.
+                // A better approach is a structured file format { salt: "...", payload: "..." }.
+                
+                // Let's assume a simple structure for now. We'll try to decrypt with the current salt first.
+                const tempSalt = new Uint8Array(JSON.parse(localStorage.getItem('user_salt')));
+                const key = await CryptoService.deriveKeyFromPIN(pin, tempSalt);
+                const backupJson = await CryptoService.decrypt(encryptedBackup, key);
+
+                if (!backupJson) {
+                    throw new Error('فشل فك تشفير الملف. قد يكون رمز الدخول غير صحيح أو أن النسخة الاحتياطية تالفة.');
+                }
+
+                const backupData = JSON.parse(backupJson);
+
+                // 2. Clear current database
+                await StorageService.execute('DELETE FROM notes');
+                await StorageService.execute('DELETE FROM events');
+
+                // 3. Insert new data
+                for (const note of backupData.data.notes) {
+                    await StorageService.execute('INSERT INTO notes VALUES (?, ?, ?, ?, ?, ?, ?)', Object.values(note));
+                }
+                for (const event of backupData.data.events) {
+                    await StorageService.execute('INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?)', Object.values(event));
+                }
+
+                // 4. Replace security credentials with those from the backup
+                localStorage.setItem('user_salt', backupData.salt);
+                localStorage.setItem('verification_data', backupData.verificationData);
+
+                alert('تم استيراد البيانات بنجاح. سيتم إعادة تحميل التطبيق الآن.');
+                window.location.reload();
+
+            } catch (error) {
+                console.error('Settings: Import failed:', error);
+                alert(`فشل الاستيراد: ${error.message}`);
+            }
+        }
+    };
+}
+
+
+============================================================
+اسم الملف: app/controllers/AuthController.js
+============================================================
+/**
+ * app/controllers/AuthController.js
+ *
+ * Manages the entire authentication lifecycle of the application.
+ * - Checks if a user is new or returning.
+ * - Handles the setup of a new PIN.
+ * - Verifies the PIN for returning users.
+ * - Holds the masterKey and dispatches it to the app upon successful unlock.
+ */
+function authController() {
+    return {
+        // --- State ---
+        isLocked: true,
+        isNewUser: false,
+        masterKey: null,
+
+        // --- Initialization ---
+        init() {
+            // Check if security credentials (salt, verification data) exist
+            const salt = localStorage.getItem('user_salt');
+            const verificationData = localStorage.getItem('verification_data');
+
+            if (!salt || !verificationData) {
+                this.isNewUser = true;
+                console.log("Auth: No credentials found. New user setup required.");
+            } else {
+                this.isNewUser = false;
+                console.log("Auth: Credentials found. Awaiting PIN.");
+            }
+        },
+
+        // --- Actions ---
+
+        /**
+         * Handles the unlock attempt event from the pin-lock-screen.
+         * @param {CustomEvent} event - The event containing the user's PIN.
+         */
+        async handleUnlockAttempt(event) {
+            const pin = event.detail.pin;
+            const salt = new Uint8Array(JSON.parse(localStorage.getItem('user_salt')));
+            const verificationData = localStorage.getItem('verification_data');
+
+            // 1. Derive key from the provided PIN and stored salt
+            const key = await CryptoService.deriveKeyFromPIN(pin, salt);
+
+            // 2. Attempt to decrypt the verification data
+            const decrypted = await CryptoService.decrypt(verificationData, key);
+
+            // 3. Check if decryption was successful and the content matches
+            if (decrypted === 'verified') {
+                console.log("Auth: Unlock successful.");
+                this.masterKey = key;
+                this.isLocked = false;
+                // Announce to the entire application that it is unlocked and provide the key
+                this.$dispatch('app-unlocked', { masterKey: this.masterKey });
+            } else {
+                console.warn("Auth: Unlock failed. Incorrect PIN.");
+                // Announce that the unlock attempt failed so the UI can react
+                this.$dispatch('unlock-failed');
+            }
+        },
+
+        /**
+         * Sets up the application for a new user by creating and storing security credentials.
+         * @param {string} pin - The new PIN chosen by the user.
+         */
+        async setupNewPIN(pin) {
+            if (!this.isNewUser) return;
+            console.log('Auth: Setting up new PIN...');
+
+            // 1. Generate a new, unique salt
+            const salt = CryptoService.generateSalt();
+
+            // 2. Derive a master key from the new PIN and salt
+            const key = await CryptoService.deriveKeyFromPIN(pin, salt);
+
+            // 3. Create a verification message and encrypt it with the new key
+            const verificationMessage = 'verified';
+            const verificationData = await CryptoService.encrypt(verificationMessage, key);
+
+            // 4. Store the salt and encrypted verification data in localStorage
+            localStorage.setItem('user_salt', JSON.stringify(Array.from(salt)));
+            localStorage.setItem('verification_data', verificationData);
+
+            console.log('Auth: New user setup complete.');
+            alert('تم إعداد رمز الدخول بنجاح. سيتم إعادة تحميل التطبيق.');
+            window.location.reload();
+        }
+    };
+}
+
+
+
+============================================================
+اسم الملف: app/controllers/CalendarController.js
+============================================================
+/**
+ * app/controllers/CalendarController.js
+ *
+ * This controller manages the state and actions for the main calendar view.
+ * It's responsible for:
+ * - Keeping track of the currently displayed month and year.
+ * - Generating the grid of days for the current month.
+ * - Fetching and decrypting events for the visible date range from the Event model.
+ * - Handling navigation between months.
+ */
+function calendarController() {
+    return {
+        // --- State ---
+        currentDate: new Date(), // The date object used to determine the month/year to display.
+        days: [],                // An array of day objects for the current month's grid.
+        events: [],              // A list of events for the currently displayed month.
+        isLoading: true,
+        masterKey: null,
+
+        // --- Initialization ---
+        init() {
+            // Listen for the master key before doing anything
+            window.addEventListener('app-unlocked', (event) => {
+                if (!this.masterKey) {
+                    this.masterKey = event.detail.masterKey;
+                    this.generateCalendar();
+                }
+            });
+
+            // Listen for the custom event dispatched when an event is saved or deleted
+            window.addEventListener('events-updated', () => this.loadEventsForMonth());
+        },
+
+        // --- Calendar Logic ---
+        generateCalendar() {
+            this.isLoading = true;
+            this.generateDaysForGrid();
+            this.loadEventsForMonth();
+            this.isLoading = false;
+        },
+
+        /**
+         * Generates the array of day objects needed to render the calendar grid.
+         * Includes days from the previous and next months to fill the grid.
+         */
+        generateDaysForGrid() {
+            const year = this.currentDate.getFullYear();
+            const month = this.currentDate.getMonth();
+            
+            const firstDayOfMonth = new Date(year, month, 1);
+            const lastDayOfMonth = new Date(year, month + 1, 0);
+            
+            const daysInMonth = lastDayOfMonth.getDate();
+            const startDayOfWeek = firstDayOfMonth.getDay(); // 0=Sunday, 1=Monday...
+
+            const grid = [];
+            
+            // 1. Days from previous month
+            const prevMonthLastDay = new Date(year, month, 0).getDate();
+            for (let i = startDayOfWeek; i > 0; i--) {
+                grid.push({
+                    day: prevMonthLastDay - i + 1,
+                    isCurrentMonth: false,
+                    date: new Date(year, month - 1, prevMonthLastDay - i + 1)
+                });
+            }
+
+            // 2. Days of the current month
+            for (let i = 1; i <= daysInMonth; i++) {
+                grid.push({
+                    day: i,
+                    isCurrentMonth: true,
+                    isToday: new Date().toDateString() === new Date(year, month, i).toDateString(),
+                    date: new Date(year, month, i)
+                });
+            }
+
+            // 3. Days from next month
+            const gridEnd = 42 - grid.length; // 6 rows * 7 days
+            for (let i = 1; i <= gridEnd; i++) {
+                grid.push({
+                    day: i,
+                    isCurrentMonth: false,
+                    date: new Date(year, month + 1, i)
+                });
+            }
+            
+            this.days = grid;
+        },
+
+        /**
+         * Fetches all events for the currently displayed month from the Event model.
+         */
+        async loadEventsForMonth() {
+            if (!this.masterKey) return;
+
+            const year = this.currentDate.getFullYear();
+            const month = this.currentDate.getMonth();
+
+            const startDate = new Date(year, month, 1).getTime();
+            const endDate = new Date(year, month + 1, 0, 23, 59, 59).getTime();
+
+            try {
+                this.events = await Event.findByDateRange(startDate, endDate, this.masterKey);
+            } catch (error) {
+                console.error("Failed to load events for month:", error);
+                this.events = [];
+            }
+        },
+
+        // --- UI Navigation ---
+        nextMonth() {
+            this.currentDate.setMonth(this.currentDate.getMonth() + 1);
+            this.generateCalendar();
+        },
+
+        previousMonth() {
+            this.currentDate.setMonth(this.currentDate.getMonth() - 1);
+            this.generateCalendar();
+        },
+
+        goToToday() {
+            this.currentDate = new Date();
+            this.generateCalendar();
+        },
+
+        // --- Helpers ---
+        get monthName() {
+            return this.currentDate.toLocaleDateString('ar-EG', { month: 'long' });
+        },
+        get year() {
+            return this.currentDate.getFullYear();
+        }
+    };
+}
+
+
+============================================================
+اسم الملف: app/controllers/EventController.js
+============================================================
+/**
+ * app/controllers/EventController.js
+ *
+ * This controller manages the state and actions for individual events.
+ * It would be responsible for:
+ * - Handling the creation of a new event (e.g., showing an event editor form).
+ * - Handling the editing of an existing event.
+ * - Interacting with the Event model to save or delete data.
+ *
+ * NOTE: This is a foundational structure. It would be expanded with methods
+ * similar to notesController (e.g., createNewEvent, editEvent, saveEvent).
+ */
+function eventController() {
+    return {
+        // --- State ---
+        isEditing: false,   // Toggles the event editor/form.
+        activeEvent: null,  // The event object currently being edited.
+        masterKey: null,    // The master encryption key.
+
+        // --- Initialization ---
+        init() {
+            // Listen for the master key
+            window.addEventListener('app-unlocked', (event) => {
+                if (!this.masterKey) {
+                    this.masterKey = event.detail.masterKey;
+                }
+            });
+            // Listen for save/close events from the (hypothetical) event editor
+        },
+
+        // --- Actions ---
+        /**
+         * Opens the editor to create a new event.
+         * @param {number} defaultDate - A timestamp for the default start date.
+         */
+        createNewEvent(defaultDate) {
+            this.activeEvent = {
+                id: null,
+                title: '',
+                description: '',
+                startTime: defaultDate || Date.now(),
+                isAllDay: false
+            };
+            this.isEditing = true;
+        },
+
+        /**
+         * Opens the editor for an existing event.
+         * @param {object} eventObject - The event to edit.
+         */
+        editEvent(eventObject) {
+            this.activeEvent = { ...eventObject }; // Use a copy
+            this.isEditing = true;
+        },
+
+        /**
+         * Saves the event (new or existing) using the Event model.
+         */
+        async saveEvent() {
+            if (!this.masterKey || !this.activeEvent) return;
+
+            try {
+                if (this.activeEvent.id) {
+                    await Event.update(this.activeEvent.id, this.activeEvent, this.masterKey);
+                } else {
+                    await Event.create(this.activeEvent, this.masterKey);
+                }
+            } catch (error) {
+                console.error("Failed to save event:", error);
+            } finally {
+                this.isEditing = false;
+                // Dispatch an event to tell the CalendarController to reload events
+                window.dispatchEvent(new CustomEvent('events-updated'));
+            }
+        },
+
+        closeEditor() {
+            this.isEditing = false;
+            this.activeEvent = null;
+        }
+    };
+}
+
+
+============================================================
+اسم الملف: app/controllers/NoteController.js
+============================================================
+/**
+ * app/controllers/NoteController.js
+ *
+ * This controller manages the state and actions for the notes view.
+ * It's responsible for:
+ * - Loading and decrypting notes from the Note model.
+ * - Handling search and filtering.
+ * - Managing the state for creating and editing notes (showing/hiding the editor).
+ * - Interacting with the Note model to save or delete data.
+ */
+function notesController() {
+    return {
+        // --- State ---
+        notes: [],          // The master list of all notes, loaded once.
+        filteredNotes: [],  // The list of notes to be displayed after filtering.
+        isLoading: true,    // Controls the visibility of the loading indicator.
+        isEditing: false,   // Toggles the rich-text editor overlay.
+        activeNote: null,   // The note object currently being edited or created.
+        searchQuery: '',    // The current text in the search input.
+        masterKey: null,    // The master encryption key, received after unlock.
+
+        // --- Initialization ---
+        init() {
+            // This controller is initialized when its view is shown.
+            // We need the masterKey to do anything, so we listen for the 'app-unlocked' event.
+            window.addEventListener('app-unlocked', (event) => {
+                if (!this.masterKey) { // Prevent re-loading if already initialized
+                    console.log('Notes controller received master key.');
+                    this.masterKey = event.detail.masterKey;
+                    this.loadNotes();
+                }
+            });
+
+            // Listen for events dispatched from the editor component
+            window.addEventListener('save-note-request', (event) => this.saveNote(event.detail.note));
+            window.addEventListener('close-editor-request', () => this.closeEditor());
+        },
+
+        // --- Data Actions ---
+        async loadNotes() {
+            if (!this.masterKey) return;
+            this.isLoading = true;
+            try {
+                this.notes = await Note.findAll(this.masterKey);
+                this.filterNotes(); // Apply initial (empty) filter
+            } catch (error) {
+                console.error("Failed to load notes:", error);
+                // Optionally dispatch an event to show a global error message
+            } finally {
+                this.isLoading = false;
+            }
+        },
+
+        async saveNote(noteData) {
+            if (!this.masterKey) return;
+
+            try {
+                if (noteData.id) { // Existing note
+                    await Note.update(noteData.id, noteData, this.masterKey);
+                } else { // New note
+                    await Note.create(noteData, this.masterKey);
+                }
+            } catch (error) {
+                console.error("Failed to save note:", error);
+            } finally {
+                this.closeEditor();
+                await this.loadNotes(); // Reload all notes to show changes
+            }
+        },
+
+        async deleteNote(noteId) {
+            // This could be called from a delete button in the editor or a swipe action
+            if (!confirm('هل أنت متأكد من حذف هذه الملاحظة نهائياً؟')) return;
+
+            try {
+                await Note.delete(noteId);
+            } catch (error) {
+                console.error("Failed to delete note:", error);
+            } finally {
+                this.closeEditor();
+                await this.loadNotes();
+            }
+        },
+
+        // --- UI Actions ---
+        createNewNote() {
+            this.activeNote = { id: null, title: '', content: '', is_favorite: false };
+            this.isEditing = true;
+        },
+
+        editNote(noteId) {
+            const noteToEdit = this.notes.find(n => n.id === noteId);
+            if (noteToEdit) {
+                this.activeNote = { ...noteToEdit }; // Pass a copy to prevent live-binding issues
+                this.isEditing = true;
+            }
+        },
+
+        closeEditor() {
+            this.isEditing = false;
+            this.activeNote = null;
+        },
+
+        filterNotes() {
+            if (!this.searchQuery) {
+                this.filteredNotes = this.notes;
+                return;
+            }
+            const query = this.searchQuery.toLowerCase();
+            this.filteredNotes = this.notes.filter(note => {
+                const content = note.content.replace(/<[^>]+>/g, ''); // Strip HTML for searching
+                return note.title.toLowerCase().includes(query) || content.toLowerCase().includes(query);
+            });
+        }
+    };
+}
+
+
+============================================================
+اسم الملف: app/utils/Validator.js
+============================================================
+/**
+ * app/utils/Validator.js
+ *
+ * A utility object for common client-side validation tasks.
+ * These functions help ensure data is in the correct format before processing.
+ */
+const Validator = {
+
+    /**
+     * Checks if a value is a non-empty string.
+     * @param {string} value - The value to check.
+     * @returns {boolean} True if the value is a non-empty string.
+     */
+    isNotEmpty(value) {
+        return typeof value === 'string' && value.trim().length > 0;
+    },
+
+    /**
+     * Checks if a value is a valid 4-digit PIN.
+     * @param {string} pin - The PIN to check.
+     * @returns {boolean} True if the value is a 4-digit string.
+     */
+    isPin(pin) {
+        return /^\d{4}$/.test(pin);
+    },
+
+    /**
+     * Checks if two values are identical. Useful for "confirm PIN" or "confirm password" fields.
+     * @param {any} value1 - The first value.
+     * @param {any} value2 - The second value.
+     * @returns {boolean} True if the values are identical.
+     */
+    areEqual(value1, value2) {
+        return value1 === value2;
+    },
+
+    /**
+     * Checks if a value is a valid email address format.
+     * @param {string} email - The email to check.
+     * @returns {boolean} True if the value has a valid email format.
+     */
+    isEmail(email) {
+        if (!email || typeof email !== 'string') return false;
+        // A simple, common regex for email validation.
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        return emailRegex.test(email);
+    },
+
+    /**
+     * Checks if a value is within a specified length range.
+     * @param {string} value - The string to check.
+     * @param {object} options - The min and max length.
+     * @param {number} [options.min=0] - The minimum required length.
+     * @param {number} [options.max=Infinity] - The maximum allowed length.
+     * @returns {boolean} True if the string's length is within the range.
+     */
+    hasLength(value, { min = 0, max = Infinity }) {
+        if (typeof value !== 'string') return false;
+        return value.length >= min && value.length <= max;
+    }
+};
+
+
+============================================================
+اسم الملف: app/utils/DateFormatter.js
+============================================================
+/**
+ * app/utils/DateFormatter.js
+ *
+ * A utility object containing helper functions for consistently formatting dates and times
+ * throughout the application's UI. It's designed for the Egyptian Arabic locale.
+ */
+const DateFormatter = {
+
+    /**
+     * Formats a date for display in lists (e.g., note list).
+     * Shows relative time for recent dates and a full date for older ones.
+     * @param {number} timestamp - The Unix timestamp.
+     * @returns {string} A user-friendly, formatted date string.
+     */
+    formatForList(timestamp) {
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diffSeconds = (now.getTime() - date.getTime()) / 1000;
+        const diffDays = diffSeconds / (60 * 60 * 24);
+
+        if (diffDays < 1 && date.getDate() === now.getDate()) {
+            // Today: show time
+            return date.toLocaleTimeString('ar-EG', { hour: 'numeric', minute: '2-digit' });
+        } else if (diffDays < 2 && date.getDate() === now.getDate() - 1) {
+            // Yesterday
+            return 'الأمس';
+        } else if (diffDays < 7) {
+            // Within the last week: show day name
+            return date.toLocaleDateString('ar-EG', { weekday: 'long' });
+        } else {
+            // Older: show full date
+            return date.toLocaleDateString('ar-EG', { day: 'numeric', month: 'short', year: 'numeric' });
+        }
+    },
+
+    /**
+     * Formats a time for display in event lists.
+     * @param {number} timestamp - The Unix timestamp.
+     * @returns {string} A formatted time string (e.g., "٠٣:٣٠ م").
+     */
+    formatTime(timestamp) {
+        return new Date(timestamp).toLocaleTimeString('ar-EG', {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        });
+    },
+
+    /**
+     * Formats a date for use in a calendar header.
+     * @param {Date} date - The date object.
+     * @returns {string} A formatted month and year (e.g., "فبراير ٢٠٢٦").
+     */
+    formatCalendarHeader(date) {
+        return date.toLocaleDateString('ar-EG', {
+            month: 'long',
+            year: 'numeric'
+        });
+    },
+
+    /**
+     * A simple utility to truncate text without breaking words.
+     * @param {string} text - The text to truncate.
+     * @param {number} length - The maximum length.
+     * @returns {string} The truncated text.
+     */
+    truncate(text, length) {
+        if (!text) return '';
+        const cleanText = text.replace(/<[^>]+>/g, ''); // Strip HTML tags
+        if (cleanText.length <= length) return cleanText;
+        return cleanText.substring(0, length) + '...';
+    }
+};
+
+

@@ -319,3 +319,70 @@ body {
 .transition-leave { transition: opacity 0.3s ease; }
 .transition-leave-start { opacity: 1; }
 .transition-leave-end { opacity: 0; }
+
+/* ... (كل الأنماط السابقة) ... */
+
+/* --- Floating Action Button (FAB) --- */
+.fab {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem; /* CORRECTED: from left to right for RTL */
+    width: 3.5rem;
+    height: 3.5rem;
+    border-radius: 50%;
+    background-color: var(--accent-color);
+    color: var(--accent-text);
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    cursor: pointer;
+    z-index: 40;
+}
+
+/* --- ADDED MISSING CLASSES --- */
+.button-primary {
+    background-color: var(--accent-color);
+    color: var(--accent-text);
+    border-radius: 0.5rem;
+    padding: 0.5rem 1rem;
+    border: none;
+    cursor: pointer;
+}
+.button-secondary {
+    background: none;
+    color: var(--accent-color);
+    border: none;
+    cursor: pointer;
+}
+.tab-nav {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 1rem;
+}
+.tab-nav button {
+    background: none;
+    border: none;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    border-bottom: 2px solid transparent;
+}
+.tab-nav button.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent-color);
+}
+.loading-indicator, .empty-state {
+    text-align: center;
+    padding: 4rem 1rem;
+    color: var(--text-secondary);
+}
+.note-item.is-favorite {
+    border-right: 4px solid var(--accent-color);
+}
+
+/* ... (باقي الأنماط) ... */
+
