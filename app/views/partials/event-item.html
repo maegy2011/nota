@@ -1,0 +1,23 @@
+<!--
+  app/views/partials/event-item.html
+
+  This is a partial template for a single event item.
+  It expects an `event` object to be available in its scope.
+  It displays the event's time and title.
+-->
+<article class="event-item">
+    <!-- Event Time -->
+    <div class="event-time">
+        <!-- Display 'All Day' or the specific start time -->
+        <span x-text="event.isAllDay ? 'يوم كامل' : formatTime(event.startTime)"></span>
+    </div>
+
+    <!-- Event Details -->
+    <div class="event-details">
+        <!-- Event Title -->
+        <h4 class="event-title" x-text="event.title"></h4>
+        
+        <!-- Optional: Event Description Snippet -->
+        <p x-show="event.description" class="event-description-snippet" x-text="truncate(event.description, 80)"></p>
+    </div>
+</article>

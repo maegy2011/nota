@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>تطبيق الملاحظات</title>
+
+    <!-- PWA Manifest and Theme -->
+    <meta name="theme-color" content="#007aff"/>
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="assets/icons/icon-192x192.png">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+
+    <!-- Main Stylesheet -->
+    <link rel="stylesheet" href="app/assets/css/main.css">
+
+    <!-- Alpine.js Core -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
+</head>
+
+<body x-data="appController()" x-init="init()" x-cloak>
+
+    <!-- Splash Screen: Shown during initial asset loading -->
+    <!-- Content is in app/views/partials/splash-screen.html -->
+    <div x-html="splashScreenHtml"></div>
+
+    <!-- PIN Lock Screen: Shown if app is locked -->
+    <!-- Content is in app/views/partials/pin-lock-screen.html -->
+    <div x-show="isLocked" @unlock.window="handleUnlockAttempt($event)" x-html="pinLockScreenHtml"></div>
+    
+    <!-- New User Setup Screen -->
+    <div x-show="isNewUser" x-data="newUserSetupController()" class="pin-lock-screen">
+        <!-- A simplified version of the PIN screen for setup -->
+        <div class="pin-lock-content">
+            <h3>إعداد رمز دخول جديد</h3>
+            <div class="pin-dots">
+                <template x-for="i in 4"><span class="dot" :class="{ 'filled': pin.length >= i }"></span></template>
+            </div>
+            <p x-show="!isConfirming">أدخل الرمز المكون من 4 أرقام</p>
+            <p x-show="isConfirming">أعد إدخال الرمز للتأكيد</p>
+            <div class="keypad">
+                <template x-for="num in [1, 2, 3, 4, 5, 6, 7, 8, 9]"><button @click="append(num)" x-text="num"></button></template>
+                <button class="keypad-icon" @click="clear()"></button>
+                <button @click="append(0)">0</button>
+                <button class="keypad-icon" @click="backspace()"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Application Content: Shown when unlocked -->
+    <main x-show="!isLocked && !isNewUser" class="app-container">
+        <!-- Main Layout: Notes and Calendar views -->
+        <!-- Content is in app/views/layouts/main.html -->
+        <div x-html="mainLayoutHtml"></div>
+
+        <!-- Rich Text Editor Overlay -->
+        <!-- This will be controlled by notesController inside main.html -->
+    </main>
+
+    <!-- === JAVASCRIPT LIBRARIES === -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment-hijri/2.1.2/moment-hijri.min.js"></script>
+
+    <!-- === SERVICES === -->
+    <script src="app/services/CryptoService.js"></script>
+    <script src="app/services/StorageService.js"></script>
+    <script src="app/services/CalendarService.js"></script>
+
+    <!-- === UTILS === -->
+    <script src="app/utils/DateFormatter.js"></script>
+    <script src="app/utils/Validator.js"></script>
+
+    <!-- === MODELS === -->
+    <script src="app/models/Note.js"></script>
+    <script src="app/models/Event.js"></script>
+    <script src="app/models/Settings.js"></script>
+
+    <!-- === CONTROLLERS === -->
+    <script src="app/controllers/AuthController.js"></script>
+    <script src="app/controllers/SettingsController.js"></script>
+    <script src="app/controllers/NoteController.js"></script>
+    <script src="app/controllers/CalendarController.js"></script>
+    
+    <!-- === MAIN APP CONTROLLER === -->
+    <script>
+        function appController() {
+            return {
+                isLoading: true,
+                isLocked: true,
+                isNewUser: false,
+                // --- Partials HTML ---
+                splashScreenHtml: '',
+                pinLockScreenHtml: '',
+                mainLayoutHtml: '',
+                // --- Auth Logic ---
+                ...authController(),
+                // --- Main Init ---
+                async init() {
+                    // Start loading partials and DB in parallel
+                    const partialsPromise = this.loadPartials();
+                    const dbPromise = StorageService.init();
+                    
+                    this.authInit(); // Renamed from init() in authController to avoid conflict
+                    
+                    await Promise.all([partialsPromise, dbPromise]);
+                    
+                    // Hide splash screen after a minimum duration for better UX
+                    setTimeout(() => {
+                        this.isLoading = false;
+                        if (this.isNewUser) {
+                            this.isLocked = false; // Don't show lock screen for new user
+                        }
+                    }, 500);
+                },
+                authInit() { this.init(); }, // Bridge to the original authController.init
+                async loadPartials() {
+                    const [splash, pin, main] = await Promise.all([
+                        fetch('app/views/partials/splash-screen.html').then(res => res.text()),
+                        fetch('app/views/partials/pin-lock-screen.html').then(res => res.text()),
+                        fetch('app/views/layouts/main.html').then(res => res.text())
+                    ]);
+                    this.splashScreenHtml = splash;
+                    this.pinLockScreenHtml = pin;
+                    this.mainLayoutHtml = main;
+                }
+            };
+        }
+
+        function newUserSetupController() {
+            return {
+                pin: '',
+                confirmPin: '',
+                isConfirming: false,
+                append(num) {
+                    if (this.pin.length < 4) this.pin += num;
+                    if (this.pin.length === 4) {
+                        if (!this.isConfirming) {
+                            this.isConfirming = true;
+                            this.confirmPin = this.pin;
+                            this.pin = '';
+                        } else {
+                            if (this.pin === this.confirmPin) {
+                                // Dispatch event to AuthController to finalize setup
+                                window.dispatchEvent(new CustomEvent('setup-new-pin', { detail: { pin: this.pin } }));
+                            } else {
+                                alert('الرمزان غير متطابقان. حاول مرة أخرى.');
+                                this.clear();
+                            }
+                        }
+                    }
+                },
+                clear() {
+                    this.pin = '';
+                    this.confirmPin = '';
+                    this.isConfirming = false;
+                },
+                backspace() { this.pin = this.pin.slice(0, -1); }
+            };
+        }
+        // Listen for the setup event globally
+        window.addEventListener('setup-new-pin', (e) => {
+            const mainController = document.querySelector('[x-data]').__x.getUnwrappedDataProxy();
+            mainController.setupNewPIN(e.detail.pin);
+        });
+    </script>
+</body>
+</html>
+

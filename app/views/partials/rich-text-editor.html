@@ -1,0 +1,117 @@
+<!--
+  app/views/partials/rich-text-editor.html
+
+  A full-screen overlay for editing a note.
+  It's managed by its own `editorController` and is initialized with a `note` object.
+  It handles UI interactions and dispatches events for 'save' or 'close' actions,
+  leaving the data persistence logic to the main controller.
+-->
+<div 
+    class="editor-overlay" 
+    x-data="editorController(noteToEdit)" 
+    x-init="init()"
+    x-show="isEditing" 
+    @keydown.escape.window="closeEditor()"
+    x-transition:enter="transition-enter"
+    x-transition:enter-start="transition-enter-start"
+    x-transition:enter-end="transition-enter-end"
+    x-transition:leave="transition-leave"
+    x-transition:leave-start="transition-leave-start"
+    x-transition:leave-end="transition-leave-end"
+>
+    <!-- Editor Toolbar -->
+    <div class="editor-toolbar">
+        <button @click="saveNote()" class="button-primary">حفظ</button>
+        <div class="format-buttons">
+            <button @click="format('bold')" aria-label="عريض"><b>B</b></button>
+            <button @click="format('italic')" aria-label="مائل"><i>I</i></button>
+            <button @click="format('insertUnorderedList')" aria-label="قائمة نقطية">●</button>
+            <button @click="format('insertOrderedList')" aria-label="قائمة رقمية">1.</button>
+            <button @click="format('removeFormat')" aria-label="إزالة التنسيق">⌧</button>
+        </div>
+        <button @click="closeEditor()" class="button-secondary">إغلاق</button>
+    </div>
+
+    <!-- Main Editor Area -->
+    <div class="editor-body">
+        <!-- Note Title Input -->
+        <input 
+            type="text" 
+            x-model="note.title" 
+            placeholder="عنوان الملاحظة..." 
+            class="editor-title"
+            aria-label="عنوان الملاحظة"
+        >
+
+        <!-- Rich Text Content Area -->
+        <div 
+            id="rich-text-content" 
+            class="editor-content"
+            contenteditable="true" 
+            role="textbox" 
+            aria-multiline="true"
+            aria-label="محتوى الملاحظة"
+            @input="note.content = $event.target.innerHTML"
+            x-html="note.content"
+        ></div>
+    </div>
+</div>
+
+<script>
+function editorController(note) {
+    return {
+        // The note object passed from the parent controller (e.g., { id: null, title: '', content: '' })
+        note: { ...note },
+
+        init() {
+            // When the editor opens, focus the title field if it's a new note,
+            // or the content field if it's an existing one.
+            this.$nextTick(() => {
+                if (this.note && !this.note.id) {
+                    this.$el.querySelector('.editor-title').focus();
+                } else {
+                    const contentEl = this.$el.querySelector('.editor-content');
+                    contentEl.focus();
+                    // Move cursor to the end of the content
+                    const range = document.createRange();
+                    const sel = window.getSelection();
+                    range.selectNodeContents(contentEl);
+                    range.collapse(false);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                }
+            });
+        },
+
+        /**
+         * Applies a formatting command to the selected text in the editor.
+         * @param {string} command - The command to execute (e.g., 'bold', 'italic').
+         */
+        format(command) {
+            document.execCommand(command, false, null);
+            document.getElementById('rich-text-content').focus();
+        },
+
+        /**
+         * Dispatches an event to the parent controller to save the note.
+         */
+        saveNote() {
+            // Ensure content is synced from the contenteditable div
+            this.note.content = document.getElementById('rich-text-content').innerHTML;
+            if (!this.note.title.trim() && !this.note.content.trim()) {
+                // Don't save empty notes, just close
+                this.closeEditor();
+                return;
+            }
+            this.$dispatch('save-note-request', { note: this.note });
+        },
+
+        /**
+         * Dispatches an event to the parent controller to close the editor.
+         */
+        closeEditor() {
+            this.$dispatch('close-editor-request');
+        }
+    };
+}
+</script>

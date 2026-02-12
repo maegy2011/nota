@@ -1,0 +1,26 @@
+<!--
+  app/views/partials/note-item.html
+
+  This is a partial template for a single note item in the list.
+  It expects a `note` object to be available in its scope.
+  It displays the title, a snippet of the content, and metadata.
+-->
+<article class="note-item" :class="{ 'is-favorite': note.isFavorite }">
+    <!-- Note Title -->
+    <h3 class="note-title" x-text="note.title || 'ملاحظة بلا عنوان'"></h3>
+
+    <!-- Note Content Snippet -->
+    <!-- We strip HTML for the preview and truncate the text -->
+    <p class="note-snippet" x-text="truncate(stripHtml(note.content), 100)"></p>
+
+    <!-- Metadata -->
+    <div class="note-meta">
+        <!-- Last Updated Date -->
+        <span class="note-date" x-text="formatDate(note.updatedAt)"></span>
+        
+        <!-- Favorite Indicator -->
+        <span x-show="note.isFavorite" class="favorite-icon" aria-label="مفضلة">
+            ⭐
+        </span>
+    </div>
+</article>

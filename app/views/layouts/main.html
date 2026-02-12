@@ -1,0 +1,88 @@
+<!--
+  app/views/layouts/main.html
+
+  This is the main layout of the application after the user is authenticated.
+  It contains the primary header, navigation (tabs for notes/calendar),
+  and the content area that will be populated with data by its controller.
+  It's managed by a main `appViewController`.
+-->
+<div x-data="appViewController" x-init="init()" class="app-container">
+    <!-- Main Header -->
+    <header class="main-header">
+        <h1 x-text="activeTab === 'notes' ? 'ملاحظاتي' : 'التقويم'"></h1>
+        <div class="header-actions">
+            <!-- Search button can be a toggle for a search bar -->
+            <button @click="toggleSearch()" aria-label="بحث">
+                <!-- Use an SVG icon for search -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Optional Search Bar (toggled by the button above) -->
+    <div x-show="isSearchVisible" class="search-bar-container">
+        <input type="search" x-model="searchQuery" placeholder="ابحث في الملاحظات..." @input.debounce.300ms="filterNotes()">
+    </div>
+
+    <!-- Tab Navigation -->
+    <nav class="tab-nav">
+        <button @click="switchTab('notes')" :class="{ 'active': activeTab === 'notes' }">
+            الملاحظات
+        </button>
+        <button @click="switchTab('calendar')" :class="{ 'active': activeTab === 'calendar' }">
+            التقويم
+        </button>
+    </nav>
+
+    <!-- Content Area: Displays content based on the active tab -->
+    <div class="content-area">
+        <!-- Notes View -->
+        <div x-show="activeTab === 'notes'" x-transition>
+            <!-- This part will be controlled by notesController -->
+            <div x-data="notesController" x-init="loadNotes()">
+                <!-- Loading State -->
+                <div x-show="isLoading" class="loading-indicator">
+                    <p>جاري تحميل الملاحظات...</p>
+                </div>
+
+                <!-- Empty State -->
+                <div x-show="!isLoading && notes.length === 0" class="empty-state">
+                    <p>لا توجد ملاحظات حتى الآن.</p>
+                    <span>اضغط على زر "+" لبدء إضافة ملاحظة جديدة.</span>
+                </div>
+
+                <!-- Notes List -->
+                <ul x-show="!isLoading && notes.length > 0" class="notes-list">
+                    <template x-for="note in filteredNotes" :key="note.id">
+                        <!-- The content of note-item.html will be rendered here -->
+                        <!-- We pass the 'note' object to the partial -->
+                        <li x-data="{ note: note }" x-init="$el.innerHTML = await renderPartial('app/views/partials/note-item.html', { note: note })" @click="editNote(note.id)">
+                            <!-- The partial will be dynamically loaded here -->
+                        </li>
+                    </template>
+                </ul>
+
+                <!-- Floating Action Button to add a new note -->
+                <button @click="createNewNote()" class="fab" aria-label="إضافة ملاحظة جديدة">+</button>
+            </div>
+        </div>
+
+        <!-- Calendar View -->
+        <div x-show="activeTab === 'calendar'" x-transition>
+            <!-- This part will be controlled by calendarController -->
+            <div x-data="calendarController" x-init="initCalendar()">
+                <!-- Calendar UI and event list will go here -->
+                <p>واجهة التقويم ستكون هنا.</p>
+                <!-- Example of where event items would go -->
+                <ul>
+                    <template x-for="event in events" :key="event.id">
+                        <!-- The content of event-item.html will be rendered here -->
+                        <li x-data="{ event: event }" x-init="$el.innerHTML = await renderPartial('app/views/partials/event-item.html', { event: event })">
+                            <!-- The partial will be dynamically loaded here -->
+                        </li>
+                    </template>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
