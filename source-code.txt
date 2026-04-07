@@ -1,0 +1,3820 @@
+تجميع محتويات المجلد: /storage/emulated/0/dev/New folder/youtube-channel-blocker
+============================================================
+
+
+############################################################
+# FILE: manifest.json
+############################################################
+
+{
+  "manifest_version": 3,
+  "name": "YouTube Channel & Ad Blocker",
+  "version": "2.9.0",
+  "description": "Low‑CPU YouTube filter – blocks channels, ads, shorts, keywords, sidebar clutter. Whitelist mode, background playback, export/import, context menu, homepage search redirect, encryption.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "declarativeNetRequest",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "*://www.youtube.com/*",
+    "*://m.youtube.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://www.youtube.com/*", "*://m.youtube.com/*"],
+      "js": ["content/content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options/options.html",
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "YouTube Blocker",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "24": "icons/icon24.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "24": "icons/icon24.png",
+    "32": "icons/icon32.png",
+    "64": "icons/icon64.png",
+    "128": "icons/icon128.png",
+    "256": "icons/icon256.png",
+    "512": "icons/icon512.png"
+  }
+}
+
+
+
+############################################################
+# FILE: styles.css
+############################################################
+
+/* ========== GLOBAL STYLES (shared by popup, options, and content spinner) ========== */
+
+/* Reset & Base */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Force hide blocked elements – desktop */
+ytd-rich-item-renderer.yt-blocked,
+ytd-video-renderer.yt-blocked,
+ytd-grid-video-renderer.yt-blocked,
+ytd-compact-video-renderer.yt-blocked,
+ytd-compact-radio-renderer.yt-blocked,
+ytd-channel-renderer.yt-blocked,
+ytm-shorts-lockup-view-model-v2.yt-blocked,
+ytm-shorts-lockup-view-model.yt-blocked,
+grid-shelf-view-model.yt-blocked,
+yt-lockup-view-model.yt-blocked,
+ytd-guide-entry-renderer.yt-blocked,
+ytd-guide-section-renderer.yt-blocked,
+ytd-watch-next-secondary-results-renderer.yt-blocked,
+ytd-comments.yt-blocked,
+ytd-comment-thread-renderer.yt-blocked,
+ytd-merch-shelf-renderer.yt-blocked,
+.ytp-ce-element.yt-blocked,
+.ytp-suggestion-set.yt-blocked,
+.ytp-cards-teaser-text.yt-blocked,
+.annotation-type-text.annotation.yt-blocked,
+#offer-module.yt-blocked,
+ytd-browse[page-subtype="home"].yt-blocked,
+ytd-rich-section-renderer.yt-blocked,
+ytd-reel-shelf-renderer.yt-blocked,
+.yt-related-chip-cloud-renderer.yt-blocked,
+ytd-notification-topbar-button-renderer.yt-blocked,
+ytd-toggle-button-renderer.style-text.yt-blocked,
+#footer.yt-blocked,
+#live-chat-banner > .yt-live-chat-banner-manager.yt-blocked,
+ytd-rich-item-renderer:has(badge-shape.yt-badge-shape--commerce).yt-blocked,
+ytd-compact-promoted-video-renderer.yt-blocked,
+ytd-sponsorships-button-renderer.yt-blocked,
+ytd-button-renderer[aria-label="Thanks"].yt-blocked,
+
+/* Mobile selectors */
+ytm-video-with-context-renderer.yt-blocked,
+ytm-compact-video-renderer.yt-blocked,
+ytm-channel-renderer.yt-blocked,
+ytm-reel-shelf-renderer.yt-blocked,
+ytm-reel-item-renderer.yt-blocked,
+ytm-shorts-lockup-view-model.yt-blocked,
+ytm-shorts-video-renderer.yt-blocked,
+ytm-watch-next-secondary-results-renderer.yt-blocked,
+ytm-comments-section-renderer.yt-blocked,
+.search-box-suggestions-container.yt-blocked,
+ytm-item-section-renderer.scwnr-content:nth-of-type(1) > lazy-list > .item.yt-blocked,
+
+/* Universal */
+[data-blocked="true"] {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0px !important;
+  margin: 0px !important;
+  padding: 0px !important;
+  min-height: 0px !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+
+/* ========== FILTERING SPINNER (GPU accelerated) ========== */
+#yt-blocker-spinner {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 999999;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  border-radius: 32px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: white;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  will-change: opacity;
+}
+#yt-blocker-spinner.show { opacity: 1; }
+.spinner-icon {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner-text { font-weight: 500; letter-spacing: 0.3px; }
+
+/* ========== POPUP & OPTIONS COMMON COMPONENTS ========== */
+.header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 20px 16px;
+  text-align: center;
+}
+.header h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+.header p { font-size: 12px; opacity: 0.9; }
+
+.container, .popup-content {
+  flex: 1;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.card {
+  background: white;
+  border-radius: 20px;
+  padding: 16px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+.card-header {
+  font-weight: 600;
+  font-size: 16px;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #2d3748;
+}
+
+.input-group {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.input-group input {
+  flex: 1;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 14px;
+  background: #f9fafb;
+  transition: 0.2s;
+}
+.input-group input:focus {
+  outline: none;
+  border-color: #667eea;
+  background: white;
+}
+textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 13px;
+  font-family: inherit;
+  margin-bottom: 8px;
+  resize: vertical;
+  background: #f9fafb;
+}
+textarea:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.btn {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+.btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+.btn-secondary {
+  background: #4a5568;
+  color: white;
+}
+.btn-secondary-sm {
+  background: #4a5568;
+  color: white;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 20px;
+}
+.btn-danger {
+  background: #fc8181;
+  color: white;
+}
+.btn-danger.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 20px;
+  background: #f56565;
+}
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 20px;
+}
+.btn:hover { transform: translateY(-1px); opacity: 0.9; }
+.btn:active { transform: translateY(0); }
+
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 24px;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #cbd5e0;
+  transition: 0.2s;
+  border-radius: 34px;
+}
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.2s;
+  border-radius: 50%;
+}
+.toggle input:checked + .toggle-slider { background: linear-gradient(135deg, #667eea, #764ba2); }
+.toggle input:checked + .toggle-slider:before { transform: translateX(24px); }
+
+.toggle-sm {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+}
+.toggle-sm input { opacity: 0; width: 0; height: 0; }
+.toggle-slider-sm {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #cbd5e0;
+  transition: 0.2s;
+  border-radius: 34px;
+}
+.toggle-slider-sm:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.2s;
+  border-radius: 50%;
+}
+.toggle-sm input:checked + .toggle-slider-sm { background: linear-gradient(135deg, #667eea, #764ba2); }
+.toggle-sm input:checked + .toggle-slider-sm:before { transform: translateX(16px); }
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.list {
+  list-style: none;
+  margin: 8px 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.list li {
+  background: #f7fafc;
+  margin: 6px 0;
+  padding: 8px 12px;
+  border-radius: 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  border: 1px solid #edf2f7;
+}
+.list.compact li { padding: 4px 10px; font-size: 12px; }
+.list-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 500;
+  margin: 8px 0 4px;
+  color: #4a5568;
+}
+.badge {
+  background: #667eea;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 12px;
+}
+.remove-btn, .remove-item {
+  background: #fc8181;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 20px;
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.remove-btn:hover, .remove-item:hover { background: #f56565; }
+
+.footer {
+  text-align: center;
+  font-size: 10px;
+  color: #a0aec0;
+  padding: 12px;
+  background: #f5f7fb;
+  border-top: 1px solid #e2e8f0;
+}
+
+/* Statistics */
+.stats-card { text-align: center; }
+.stats-row {
+  display: flex;
+  justify-content: space-around;
+  margin: 12px 0;
+}
+.stat-item {
+  text-align: center;
+}
+.stat-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: #667eea;
+  display: block;
+}
+.stat-label {
+  font-size: 11px;
+  color: #718096;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  body, .popup-container, .options-page {
+    background: #1a202c;
+    color: #e2e8f0;
+  }
+  .card {
+    background: #2d3748;
+    color: #e2e8f0;
+  }
+  .btn-secondary {
+    background: #4a5568;
+  }
+  .toggle-row, .list-header, .card-header {
+    color: #e2e8f0;
+  }
+  .list li {
+    background: #4a5568;
+    border-color: #2d3748;
+  }
+  .input-group input, textarea, .search-box {
+    background: #4a5568;
+    color: white;
+    border-color: #2d3748;
+  }
+  .remove-item, .remove-btn {
+    background: #e53e3e;
+  }
+  .stat-value {
+    color: #a78bfa;
+  }
+}
+
+/* Mobile adjustments */
+@media (max-width: 480px) {
+  .card {
+    padding: 12px;
+  }
+  .btn {
+    padding: 8px 12px;
+  }
+  .input-group input {
+    padding: 10px;
+  }
+}
+
+
+
+############################################################
+# FILE: background/service-worker.js
+############################################################
+
+// background/service-worker.js
+import { initStorage } from './storage-manager.js';
+import { initStatisticsManager, updateTotalBlocks, getStatistics } from './statistics-manager.js';
+import { updateRedirectRules } from './redirect-rules.js';
+import { createContextMenu, handleContextMenuClick } from './context-menu.js';
+import { initAlarms, onAlarm } from './alarms.js';
+import { MESSAGE_TYPES, STORAGE_KEYS } from '../shared/constants.js';
+
+async function initBackground() {
+  await initStorage();
+  await initStatisticsManager();
+  await updateRedirectRules();
+  createContextMenu();
+  await initAlarms();
+  console.log('[Background] YouTube Blocker initialised');
+}
+
+chrome.storage.onChanged.addListener(async (changes) => {
+  if (changes.blockAllShorts || changes.blockedChannels || changes.forceDesktopMode) {
+    await updateRedirectRules();
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === MESSAGE_TYPES.BLOCKS_COUNT) {
+    updateTotalBlocks(message.delta);
+    sendResponse({ success: true });
+    return false;
+  }
+  if (message.type === MESSAGE_TYPES.GET_STATS) {
+    getStatistics().then(sendResponse);
+    return true;
+  }
+  if (message.action === 'adBlocked') {
+    updateAdStats();
+    sendResponse({ success: true });
+    return false;
+  }
+  return false;
+});
+
+chrome.contextMenus.onClicked.addListener(handleContextMenuClick);
+chrome.alarms.onAlarm.addListener(onAlarm);
+
+// ========== Batched Ad Statistics ==========
+let pendingAdIncrement = 0;
+let adStatsTimer = null;
+
+async function flushAdStats() {
+  if (pendingAdIncrement === 0) return;
+  const delta = pendingAdIncrement;
+  pendingAdIncrement = 0;
+  const today = new Date().toDateString();
+  const { adsBlockedToday = 0, adsBlockedTotal = 0, adsLastDate = today } =
+    await chrome.storage.sync.get([STORAGE_KEYS.adsBlockedToday, STORAGE_KEYS.adsBlockedTotal, STORAGE_KEYS.adsLastDate]);
+
+  if (today !== adsLastDate) {
+    await chrome.storage.sync.set({
+      adsBlockedToday: delta,
+      adsBlockedTotal: adsBlockedTotal + delta,
+      adsLastDate: today
+    });
+  } else {
+    await chrome.storage.sync.set({
+      adsBlockedToday: adsBlockedToday + delta,
+      adsBlockedTotal: adsBlockedTotal + delta
+    });
+  }
+}
+
+function updateAdStats() {
+  pendingAdIncrement++;
+  if (adStatsTimer) clearTimeout(adStatsTimer);
+  adStatsTimer = setTimeout(flushAdStats, 2000);
+}
+
+// ========== Whitelist Homepage Redirect to Search ==========
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete') return;
+  const url = tab.url;
+  if (!url) return;
+
+  const isHomepage = /^(https?:\/\/)?(www\.|m\.)?youtube\.com\/?$/.test(url);
+  if (!isHomepage) return;
+
+  const { whitelistMode = false, whitelistSearchRedirect = false, whitelistSearchSelected = '' } =
+    await chrome.storage.sync.get([
+      'whitelistMode',
+      STORAGE_KEYS.whitelistSearchRedirect,
+      STORAGE_KEYS.whitelistSearchSelected
+    ]);
+
+  if (!whitelistMode || !whitelistSearchRedirect || !whitelistSearchSelected) return;
+  if (url.includes('/results?search_query=')) return;
+
+  const isMobile = url.includes('m.youtube.com');
+  const base = isMobile ? 'https://m.youtube.com' : 'https://www.youtube.com';
+  const searchUrl = `${base}/results?search_query=${encodeURIComponent(whitelistSearchSelected)}`;
+  chrome.tabs.update(tabId, { url: searchUrl });
+});
+
+initBackground();
+
+
+
+############################################################
+# FILE: background/storage-manager.js
+############################################################
+
+// background/storage-manager.js
+import { STORAGE_KEYS, DEFAULTS, getTodayString } from '../shared/constants.js';
+
+/**
+ * Get a single storage value by key (with default fallback)
+ */
+export async function getStorageItem(key) {
+  const result = await chrome.storage.sync.get(key);
+  return result[key] ?? DEFAULTS[key];
+}
+
+/**
+ * Set a single storage value
+ */
+export async function setStorageItem(key, value) {
+  await chrome.storage.sync.set({ [key]: value });
+}
+
+/**
+ * Get multiple storage values (fills missing with defaults)
+ */
+export async function getStorageItems(keys) {
+  const result = await chrome.storage.sync.get(keys);
+  for (const key of keys) {
+    if (result[key] === undefined) {
+      result[key] = DEFAULTS[key];
+    }
+  }
+  return result;
+}
+
+/**
+ * Set multiple storage values at once
+ */
+export async function setStorageItems(items) {
+  await chrome.storage.sync.set(items);
+}
+
+/**
+ * Initialise storage with default values (only sets missing keys)
+ */
+export async function initStorage() {
+  const allKeys = Object.values(STORAGE_KEYS);
+  const existing = await chrome.storage.sync.get(allKeys);
+  const toSet = {};
+  for (const key of allKeys) {
+    if (existing[key] === undefined) {
+      let defaultValue = DEFAULTS[key];
+      if (key === STORAGE_KEYS.dailyStats && typeof defaultValue === 'object') {
+        defaultValue = { date: getTodayString(), count: 0 };
+      }
+      toSet[key] = defaultValue;
+    }
+  }
+  if (Object.keys(toSet).length) {
+    await chrome.storage.sync.set(toSet);
+  }
+}
+
+
+
+############################################################
+# FILE: background/statistics-manager.js
+############################################################
+
+// background/statistics-manager.js
+import { STORAGE_KEYS, getTodayString } from '../shared/constants.js';
+import { getStorageItem, setStorageItem } from './storage-manager.js';
+
+let totalBlocksCache = 0;
+let dailyStatsCache = null;
+let weeklyStatsCache = null;
+
+function updateBadge(total) {
+  let text = '';
+  if (total >= 1000) text = (total / 1000).toFixed(1) + 'k';
+  else if (total > 0) text = total.toString();
+  chrome.action.setBadgeText({ text });
+  chrome.action.setBadgeBackgroundColor({ color: '#667eea' });
+}
+
+export async function rolloverDailyStats() {
+  const today = getTodayString();
+  let daily = await getStorageItem(STORAGE_KEYS.dailyStats);
+  let weekly = await getStorageItem(STORAGE_KEYS.weeklyStats);
+
+  if (daily.date !== today) {
+    weekly.push({ date: daily.date, count: daily.count });
+    while (weekly.length > 7) weekly.shift();
+    await setStorageItem(STORAGE_KEYS.weeklyStats, weekly);
+    daily = { date: today, count: 0 };
+    await setStorageItem(STORAGE_KEYS.dailyStats, daily);
+    dailyStatsCache = daily;
+    weeklyStatsCache = weekly;
+  }
+}
+
+export async function updateTotalBlocks(delta) {
+  if (delta <= 0) return;
+
+  let total = totalBlocksCache;
+  if (total === undefined) total = await getStorageItem(STORAGE_KEYS.totalBlocks);
+  total += delta;
+  totalBlocksCache = total;
+  await setStorageItem(STORAGE_KEYS.totalBlocks, total);
+  updateBadge(total);
+
+  let daily = dailyStatsCache;
+  if (!daily) daily = await getStorageItem(STORAGE_KEYS.dailyStats);
+  const today = getTodayString();
+  if (daily.date !== today) {
+    await rolloverDailyStats();
+    daily = { date: today, count: 0 };
+  }
+  daily.count += delta;
+  dailyStatsCache = daily;
+  await setStorageItem(STORAGE_KEYS.dailyStats, daily);
+}
+
+export async function getStatistics() {
+  const total = totalBlocksCache !== undefined ? totalBlocksCache : await getStorageItem(STORAGE_KEYS.totalBlocks);
+  const daily = dailyStatsCache || await getStorageItem(STORAGE_KEYS.dailyStats);
+  const weekly = weeklyStatsCache || await getStorageItem(STORAGE_KEYS.weeklyStats);
+  return { totalBlocks: total, dailyStats: daily, weeklyStats: weekly };
+}
+
+export async function initStatisticsManager() {
+  totalBlocksCache = await getStorageItem(STORAGE_KEYS.totalBlocks);
+  dailyStatsCache = await getStorageItem(STORAGE_KEYS.dailyStats);
+  weeklyStatsCache = await getStorageItem(STORAGE_KEYS.weeklyStats);
+  updateBadge(totalBlocksCache);
+  await rolloverDailyStats();
+}
+
+
+
+############################################################
+# FILE: background/redirect-rules.js
+############################################################
+
+// background/redirect-rules.js
+import { STORAGE_KEYS } from '../shared/constants.js';
+
+/**
+ * Update dynamic redirect rules based on current settings
+ * - Rule 1 (id=1): Redirect /shorts/* to YouTube homepage if blockAllShorts is true
+ * - Rule 2 (id=2): Redirect each blocked channel's @handle URL to homepage
+ * - Rule 3 (id=3): Redirect m.youtube.com to www.youtube.com if forceDesktopMode is true
+ */
+export async function updateRedirectRules() {
+  const { blockAllShorts = false, blockedChannels = [], forceDesktopMode = false } =
+    await chrome.storage.sync.get([
+      STORAGE_KEYS.blockAllShorts,
+      STORAGE_KEYS.blockedChannels,
+      STORAGE_KEYS.forceDesktopMode
+    ]);
+
+  const newRules = [];
+
+  // 1. Shorts redirect (desktop + mobile)
+  if (blockAllShorts) {
+    newRules.push({
+      id: 1,
+      priority: 1,
+      action: {
+        type: chrome.declarativeNetRequest.RuleActionType.REDIRECT,
+        redirect: { url: 'https://www.youtube.com/' }
+      },
+      condition: {
+        urlFilter: '*://www.youtube.com/shorts*',
+        resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
+      }
+    });
+    newRules.push({
+      id: 2,
+      priority: 1,
+      action: {
+        type: chrome.declarativeNetRequest.RuleActionType.REDIRECT,
+        redirect: { url: 'https://m.youtube.com/' }
+      },
+      condition: {
+        urlFilter: '*://m.youtube.com/shorts*',
+        resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
+      }
+    });
+  }
+
+  // 2. Blocked channel redirect rules (for handles)
+  let nextId = 1000;
+  const handles = new Set();
+  for (const item of blockedChannels) {
+    let handle = item;
+    if (handle.includes('youtube.com/@')) {
+      const match = handle.match(/youtube\.com\/@([^/?]+)/);
+      if (match) handle = '@' + match[1];
+      else continue;
+    }
+    if (handle.startsWith('@')) {
+      handles.add(handle.substring(1)); // store without '@'
+    }
+  }
+  for (const handle of handles) {
+    newRules.push({
+      id: nextId++,
+      priority: 1,
+      action: {
+        type: chrome.declarativeNetRequest.RuleActionType.REDIRECT,
+        redirect: { url: 'https://www.youtube.com/' }
+      },
+      condition: {
+        urlFilter: `*://www.youtube.com/@${handle}*`,
+        resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
+      }
+    });
+    newRules.push({
+      id: nextId++,
+      priority: 1,
+      action: {
+        type: chrome.declarativeNetRequest.RuleActionType.REDIRECT,
+        redirect: { url: 'https://m.youtube.com/' }
+      },
+      condition: {
+        urlFilter: `*://m.youtube.com/@${handle}*`,
+        resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
+      }
+    });
+  }
+
+  // 3. Force Desktop Mode
+  if (forceDesktopMode) {
+    newRules.push({
+      id: 3,
+      priority: 1,
+      action: {
+        type: chrome.declarativeNetRequest.RuleActionType.REDIRECT,
+        redirect: { transform: { scheme: 'https', host: 'www.youtube.com' } }
+      },
+      condition: {
+        urlFilter: '*://m.youtube.com/*',
+        resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
+      }
+    });
+  }
+
+  // Apply rules
+  const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+  const removeRuleIds = existingRules.map(rule => rule.id);
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds,
+    addRules: newRules
+  });
+
+  console.log(`Redirect rules updated: shorts=${blockAllShorts}, channel handles=${handles.size}, forceDesktopMode=${forceDesktopMode}`);
+}
+
+
+
+############################################################
+# FILE: background/context-menu.js
+############################################################
+
+// background/context-menu.js
+import { STORAGE_KEYS, MESSAGE_TYPES } from '../shared/constants.js';
+import { notifyYouTubeTabs } from '../shared/messaging.js';
+
+const CONTEXT_MENU_ID = 'block-channel';
+
+/**
+ * Create the context menu item (called on extension install)
+ * Removes any existing item first using callback style to avoid errors.
+ */
+export function createContextMenu() {
+  chrome.contextMenus.remove(CONTEXT_MENU_ID, () => {
+    const lastError = chrome.runtime.lastError;
+    if (lastError) {
+      console.debug('Context menu not found, creating new one');
+    }
+    chrome.contextMenus.create({
+      id: CONTEXT_MENU_ID,
+      title: '🚫 Block this channel',
+      contexts: ['link', 'video', 'image'],
+      targetUrlPatterns: ['*://*.youtube.com/*', '*://youtube.com/*']
+    });
+  });
+}
+
+/**
+ * Extract channel identifier from a YouTube URL
+ * @param {string} url - The URL from the context menu event
+ * @returns {string|null} - Channel identifier (@handle, channel ID, or null)
+ */
+function extractChannelFromUrl(url) {
+  if (!url) return null;
+  // Handle @handle URLs
+  let match = url.match(/youtube\.com\/@([^/?]+)/);
+  if (match) return '@' + match[1];
+  // Handle /channel/... URLs
+  match = url.match(/youtube\.com\/channel\/([^/?]+)/);
+  if (match) return match[1];
+  // Handle /c/... URLs
+  match = url.match(/youtube\.com\/c\/([^/?]+)/);
+  if (match) return match[1];
+  return null;
+}
+
+/**
+ * Handle context menu click: add the channel to blocklist
+ * @param {object} info - Context menu event info
+ */
+export async function handleContextMenuClick(info) {
+  if (info.menuItemId !== CONTEXT_MENU_ID) return;
+
+  const url = info.linkUrl || info.srcUrl || '';
+  const channelId = extractChannelFromUrl(url);
+  if (!channelId) return;
+
+  const { blockedChannels = [] } = await chrome.storage.sync.get(STORAGE_KEYS.blockedChannels);
+  if (!blockedChannels.includes(channelId)) {
+    const newList = [...blockedChannels, channelId];
+    await chrome.storage.sync.set({ [STORAGE_KEYS.blockedChannels]: newList });
+    await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+  }
+}
+
+
+
+############################################################
+# FILE: background/alarms.js
+############################################################
+
+// background/alarms.js
+import { rolloverDailyStats } from './statistics-manager.js';
+
+/**
+ * Initialise the daily reset alarm
+ * The alarm fires every 24 hours (periodInMinutes = 1440)
+ */
+export async function initAlarms() {
+  // Remove any existing alarm to avoid duplicates
+  await chrome.alarms.clear('dailyReset');
+  // Create a new alarm that triggers once per day
+  await chrome.alarms.create('dailyReset', { periodInMinutes: 1440 });
+}
+
+/**
+ * Listener for alarm events (called from service-worker.js)
+ * @param {chrome.alarms.Alarm} alarm - The alarm that triggered
+ */
+export async function onAlarm(alarm) {
+  if (alarm.name === 'dailyReset') {
+    await rolloverDailyStats();
+  }
+}
+
+
+
+############################################################
+# FILE: content/content.js
+############################################################
+
+// content/content.js
+// Fixed: Removed chrome.storage.session to avoid "Access to storage" error
+
+(function() {
+  // ========== Inline encryption helpers ==========
+  async function deriveKey(passphrase, salt) {
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveBits', 'deriveKey']
+    );
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: enc.encode(salt), iterations: 100000, hash: 'SHA-256' },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['decrypt']
+    );
+  }
+
+  async function decryptData(encryptedObj, passphrase, salt) {
+    const key = await deriveKey(passphrase, salt);
+    const iv = new Uint8Array(encryptedObj.iv);
+    const ciphertext = new Uint8Array(encryptedObj.ciphertext);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      ciphertext
+    );
+    return JSON.parse(new TextDecoder().decode(decrypted));
+  }
+
+  // ========== Performance helpers ==========
+  let xpathCache = new Map();
+  let lastXPathEval = 0;
+  function evaluateXPathWithCache(xpath) {
+    const now = Date.now();
+    if (now - lastXPathEval > 2000) { xpathCache.clear(); lastXPathEval = now; }
+    if (xpathCache.has(xpath)) return xpathCache.get(xpath);
+    const nodes = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+    const results = [];
+    for (let i = 0; i < nodes.snapshotLength; i++) results.push(nodes.snapshotItem(i));
+    xpathCache.set(xpath, results);
+    return results;
+  }
+
+  let lastScrollTime = 0;
+  let isScrolling = false;
+  window.addEventListener('scroll', () => { lastScrollTime = Date.now(); isScrolling = true; setTimeout(() => { if (Date.now() - lastScrollTime > 200) isScrolling = false; }, 200); });
+
+  // ========== Dynamic spinner (TrustedTypes safe) ==========
+  let spinner = null, hideTimer = null;
+  let currentAction = 'Filtering';
+  function updateSpinnerText(action) { currentAction = action; if (spinner) { const span = spinner.querySelector('.spinner-text'); if (span) span.textContent = action + '...'; } }
+  function createSpinner() {
+    if (document.getElementById('yt-blocker-spinner')) return;
+    const div = document.createElement('div');
+    div.id = 'yt-blocker-spinner';
+    const icon = document.createElement('div');
+    icon.className = 'spinner-icon';
+    const text = document.createElement('span');
+    text.className = 'spinner-text';
+    text.textContent = 'Filtering...';
+    div.appendChild(icon);
+    div.appendChild(text);
+    document.body.appendChild(div);
+    spinner = div;
+  }
+  function showSpinner(action = 'Filtering') { if (!spinner) createSpinner(); updateSpinnerText(action); requestAnimationFrame(() => spinner?.classList.add('show')); }
+  function hideSpinner() { if (spinner) spinner.classList.remove('show'); }
+  function scheduleHideSpinner() { if (hideTimer) clearTimeout(hideTimer); hideTimer = setTimeout(hideSpinner, 300); }
+
+  // ========== Stats – direct messaging (no session storage) ==========
+  let pendingDelta = 0, deltaTimer = null;
+  async function flushDelta() {
+    if (pendingDelta === 0) return;
+    const delta = pendingDelta;
+    pendingDelta = 0;
+    try {
+      await chrome.runtime.sendMessage({ type: 'BLOCKS_COUNT', delta: delta });
+    } catch(e) { console.debug('Failed to send block count:', e); }
+  }
+  function hideElement(el) {
+    if (!el || el.getAttribute('data-blocked') === 'true') return;
+    el.style.setProperty('display', 'none', 'important');
+    el.classList.add('yt-blocked');
+    el.setAttribute('data-blocked', 'true');
+    pendingDelta++;
+    if (deltaTimer) clearTimeout(deltaTimer);
+    deltaTimer = setTimeout(flushDelta, 500);
+  }
+  function flushDeltaNow() { if (deltaTimer) clearTimeout(deltaTimer); flushDelta(); }
+
+  // ========== Channel detector ==========
+  function getChannelInfo(el) {
+    let displayName = null, handle = null;
+    const isMobile = location.hostname === 'm.youtube.com';
+    if (isMobile) {
+      const nameEl = el.querySelector('.channel-name, yt-formatted-string#channel-name');
+      if (nameEl) displayName = nameEl.textContent.trim();
+      const handleLink = el.querySelector('a[href^="/@"]');
+      if (handleLink) {
+        const match = handleLink.getAttribute('href').match(/\/@([^/?]+)/);
+        if (match) handle = '@' + match[1];
+      }
+    } else {
+      const nameSel = '#channel-name a, #owner-name a, a.ytd-channel-name, #byline-container a, #channel-title #text';
+      const nameEl = el.querySelector(nameSel);
+      if (nameEl) displayName = nameEl.textContent.trim();
+      const handleLink = el.querySelector('a[href^="/@"]');
+      if (handleLink) {
+        const match = handleLink.getAttribute('href').match(/\/@([^/?]+)/);
+        if (match) handle = '@' + match[1];
+        else if (handleLink.textContent.trim().startsWith('@')) handle = handleLink.textContent.trim();
+      }
+      if (!handle && el.textContent.includes('@')) {
+        const atMatch = el.textContent.match(/@[^\s]+/);
+        if (atMatch) handle = atMatch[0];
+      }
+    }
+    return { displayName, handle };
+  }
+
+  // ========== Settings loader ==========
+  let blockedSet = new Set(), whitelistChannelsSet = new Set(), whitelistKeywordsSet = new Set();
+  let whitelistMode = false, blockAllShorts = false, cleanSidebar = false, blockKeywords = [], enableKeywordBlocking = false;
+  let backgroundPlayback = false, adBlockEnabled = true, blockVideoAds = true, blockBannerAds = true;
+  let blockByUploadDate = false, maxVideoAgeDays = 30;
+  let blockForYouShelf = false, blockBreakingNewsShelf = false;
+
+  async function loadSettings() {
+    const { encryptionEnabled = false, encryptionSalt = '', encryptedData = {} } = await chrome.storage.sync.get(['encryptionEnabled', 'encryptionSalt', 'encryptedData']);
+    if (encryptionEnabled && encryptionSalt && Object.keys(encryptedData).length) {
+      const { encryptionPassphrase } = await chrome.storage.local.get('encryptionPassphrase');
+      if (encryptionPassphrase) {
+        try {
+          const decrypted = await decryptData(encryptedData, encryptionPassphrase, encryptionSalt);
+          for (const [key, value] of Object.entries(decrypted)) {
+            await chrome.storage.sync.set({ [key]: value });
+          }
+        } catch(e) { console.error('Decryption failed', e); }
+      }
+    }
+    const res = await chrome.storage.sync.get([
+      'blockedChannels', 'blockAllShorts', 'cleanSidebar', 'blockKeywords', 'enableKeywordBlocking',
+      'whitelistChannels', 'whitelistKeywords', 'whitelistMode', 'backgroundPlayback',
+      'adBlockEnabled', 'blockVideoAds', 'blockBannerAds',
+      'blockByUploadDate', 'maxVideoAgeDays', 'blockForYouShelf', 'blockBreakingNewsShelf'
+    ]);
+    blockedSet = new Set((res.blockedChannels || []).map(c => c.toLowerCase().trim()));
+    whitelistChannelsSet = new Set((res.whitelistChannels || []).map(c => c.toLowerCase().trim()));
+    whitelistKeywordsSet = new Set((res.whitelistKeywords || []).map(k => k.toLowerCase().trim()));
+    whitelistMode = !!res.whitelistMode;
+    blockAllShorts = !!res.blockAllShorts;
+    cleanSidebar = !!res.cleanSidebar;
+    blockKeywords = res.blockKeywords || [];
+    enableKeywordBlocking = !!res.enableKeywordBlocking;
+    backgroundPlayback = !!res.backgroundPlayback;
+    adBlockEnabled = res.adBlockEnabled !== undefined ? res.adBlockEnabled : true;
+    blockVideoAds = res.blockVideoAds !== undefined ? res.blockVideoAds : true;
+    blockBannerAds = res.blockBannerAds !== undefined ? res.blockBannerAds : true;
+    blockByUploadDate = !!res.blockByUploadDate;
+    maxVideoAgeDays = res.maxVideoAgeDays || 30;
+    blockForYouShelf = !!res.blockForYouShelf;
+    blockBreakingNewsShelf = !!res.blockBreakingNewsShelf;
+  }
+
+  function isBlockedChannel(info) {
+    if (!info) return false;
+    const { displayName, handle } = info;
+    if (whitelistMode) {
+      if (handle && whitelistChannelsSet.has(handle.toLowerCase())) return false;
+      if (displayName) {
+        const lower = displayName.toLowerCase();
+        for (const w of whitelistChannelsSet) if (lower.includes(w)) return false;
+      }
+      return true;
+    } else {
+      if (handle && blockedSet.has(handle.toLowerCase())) return true;
+      if (displayName) {
+        const lower = displayName.toLowerCase();
+        for (const b of blockedSet) if (lower.includes(b)) return true;
+      }
+      return false;
+    }
+  }
+
+  function shouldBlockByKeyword(title) {
+    if (!title) return false;
+    const lower = title.toLowerCase();
+    if (whitelistMode) {
+      if (whitelistKeywordsSet.size) {
+        for (const kw of whitelistKeywordsSet) if (lower.includes(kw)) return false;
+        return true;
+      } else return true;
+    } else {
+      if (!enableKeywordBlocking || !blockKeywords.length) return false;
+      for (const kw of blockKeywords) if (lower.includes(kw)) return true;
+      return false;
+    }
+  }
+
+  function isVideoTooOld(videoEl) {
+    if (!blockByUploadDate) return false;
+    const dateElem = videoEl.querySelector('#metadata-line span:nth-child(2), .ytd-video-meta-block #metadata-line span:last-child');
+    if (!dateElem) return false;
+    const dateText = dateElem.textContent.trim();
+    const match = dateText.match(/(\d+)\s+(day|week|month|year)s?\s+ago/);
+    if (match) {
+      const num = parseInt(match[1],10);
+      const unit = match[2];
+      let days = 0;
+      if (unit === 'day') days = num;
+      else if (unit === 'week') days = num * 7;
+      else if (unit === 'month') days = num * 30;
+      else if (unit === 'year') days = num * 365;
+      return days > maxVideoAgeDays;
+    }
+    return false;
+  }
+
+  // ========== Background Playback ==========
+  let bgInterval = null, originalPause = null, activeVideo = null, videoWatcher = null;
+  let originalHidden = null, originalVisibilityState = null, popupObserver = null;
+
+  function setupPopupDismisser() {
+    if (!backgroundPlayback) return;
+    if (popupObserver) popupObserver.disconnect();
+    popupObserver = new MutationObserver(() => {
+      const btn = document.querySelector('.ytp-button-confirm, .ytp-button[aria-label*="Continue"], button.yt-spec-button-shape-next[aria-label*="Continue"]');
+      if (btn && btn.offsetParent !== null) btn.click();
+    });
+    popupObserver.observe(document.body, { childList: true, subtree: true });
+  }
+  function stopPopupDismisser() { if (popupObserver) { popupObserver.disconnect(); popupObserver = null; } }
+
+  function spoofVisibilityAPI() {
+    if (!backgroundPlayback) return;
+    if (originalHidden === null) {
+      originalHidden = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden');
+      Object.defineProperty(Document.prototype, 'hidden', { get: () => false, configurable: true });
+    }
+    if (originalVisibilityState === null) {
+      originalVisibilityState = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState');
+      Object.defineProperty(Document.prototype, 'visibilityState', { get: () => 'visible', configurable: true });
+    }
+    window.addEventListener('blur', (e) => { if (backgroundPlayback) e.stopImmediatePropagation(); }, true);
+    window.addEventListener('focus', (e) => { if (backgroundPlayback) e.stopImmediatePropagation(); }, true);
+  }
+  function restoreVisibilityAPI() {
+    if (originalHidden) { Object.defineProperty(Document.prototype, 'hidden', originalHidden); originalHidden = null; }
+    if (originalVisibilityState) { Object.defineProperty(Document.prototype, 'visibilityState', originalVisibilityState); originalVisibilityState = null; }
+  }
+
+  function overridePause(video) {
+    if (!video || video._ytBlockerOverridden) return;
+    if (!originalPause) originalPause = HTMLVideoElement.prototype.pause;
+    HTMLVideoElement.prototype.pause = function() {
+      if (backgroundPlayback && document.hidden && this === activeVideo) return;
+      return originalPause.call(this);
+    };
+    video._ytBlockerOverridden = true;
+  }
+
+  function startBackgroundPlayback(video) {
+    if (!backgroundPlayback) return;
+    if (activeVideo === video && bgInterval) return;
+    stopBackgroundPlayback();
+    activeVideo = video;
+    spoofVisibilityAPI();
+    overridePause(video);
+    setupPopupDismisser();
+    bgInterval = setInterval(() => {
+      if (backgroundPlayback && document.hidden && activeVideo && !activeVideo.ended && activeVideo.paused) {
+        activeVideo.play().catch(e=>{});
+      }
+    }, 300);
+  }
+  function stopBackgroundPlayback() {
+    if (bgInterval) { clearInterval(bgInterval); bgInterval = null; }
+    if (activeVideo && activeVideo._ytBlockerOverridden) {
+      if (originalPause) activeVideo.pause = originalPause;
+      delete activeVideo._ytBlockerOverridden;
+    }
+    activeVideo = null;
+    restoreVisibilityAPI();
+    stopPopupDismisser();
+  }
+  function watchForVideo() {
+    if (videoWatcher) videoWatcher.disconnect();
+    videoWatcher = new MutationObserver(() => {
+      const video = document.querySelector('video');
+      if (video && video !== activeVideo) startBackgroundPlayback(video);
+    });
+    videoWatcher.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ========== Ad blocking ==========
+  function notifyAdBlocked() { chrome.runtime.sendMessage({ action: 'adBlocked' }); }
+  function skipAd() { if (!adBlockEnabled || !blockVideoAds) return; const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button'); if (skipBtn && skipBtn.offsetParent !== null) { skipBtn.click(); notifyAdBlocked(); } }
+  function removeVideoAds() { if (!adBlockEnabled || !blockVideoAds) return; if (document.querySelector('.ad-showing, .ad-interrupting')) { const video = document.querySelector('video'); if (video && video.duration) { video.currentTime = video.duration; notifyAdBlocked(); } } }
+  function removeBannerAds() {
+    if (!adBlockEnabled || !blockBannerAds) return;
+    const selectors = ['.ytd-display-ad-renderer','.ytd-in-feed-ad-layout-renderer','.ad-container','#player-ads','.ytd-banner-promo-renderer','.ytd-video-masthead-ad-v3-renderer','.ytd-ad-slot-renderer','.masthead-ad','.ytd-promoted-video-renderer','.ytd-merch-shelf-renderer','ytd-search-refinement-card-renderer'];
+    for (const sel of selectors) document.querySelectorAll(sel).forEach(el => { el.style.display = 'none'; notifyAdBlocked(); });
+    const xpaths = [
+      '//*[contains(concat(" ", @class, " "), concat(" ", "ytwPanelTextIconTextGridCardsSubLayoutContentViewModelHostButton", " "))]',
+      '//*[contains(concat(" ", @class, " "), concat(" ", "ytwPanelAdHeaderImageLockupViewModelHostHeaderMetadata", " "))]',
+      '//*[contains(concat(" ", @class, " "), concat(" ", "ytwAdGridCardCollectionViewModelHost", " "))]',
+      '//div[contains(@class, "video-renderer") and .//span[contains(text(), "Sponsored")]]',
+      '//ytd-video-renderer[.//yt-formatted-string[contains(text(), "Sponsored")]]',
+      '//ytd-promoted-video-renderer',
+      '//*[@id = "social-links"]',
+      '//*[contains(concat(" ", @class, " "), concat(" ", "yt-spec-touch-feedback-shape__fill", " "))]'
+    ];
+    for (const xpath of xpaths) {
+      const nodes = evaluateXPathWithCache(xpath);
+      for (const el of nodes) if (el && el.style.display !== 'none') { el.style.display = 'none'; notifyAdBlocked(); }
+    }
+  }
+  let adObservers = [];
+  function setupAdBlocking() {
+    adObservers.forEach(o => o.disconnect()); adObservers = [];
+    if (!adBlockEnabled) return;
+    if (blockVideoAds) {
+      const obs = new MutationObserver(() => { skipAd(); removeVideoAds(); });
+      obs.observe(document.documentElement, { childList: true, subtree: true });
+      adObservers.push(obs);
+      skipAd(); removeVideoAds();
+    }
+    if (blockBannerAds) {
+      const obs = new MutationObserver(() => removeBannerAds());
+      obs.observe(document.documentElement, { childList: true, subtree: true });
+      adObservers.push(obs);
+      removeBannerAds();
+    }
+  }
+
+  // ========== Element processing ==========
+  const SELECTOR_STR = [
+    'ytd-rich-item-renderer', 'ytd-video-renderer', 'ytd-grid-video-renderer',
+    'ytd-compact-video-renderer', 'ytd-compact-radio-renderer', 'ytd-channel-renderer',
+    'ytm-shorts-lockup-view-model-v2', 'ytm-shorts-lockup-view-model',
+    'grid-shelf-view-model', 'yt-lockup-view-model',
+    'ytd-guide-entry-renderer', 'ytd-guide-section-renderer',
+    'ytd-watch-next-secondary-results-renderer',
+    'ytd-comments', 'ytd-comment-thread-renderer', 'ytd-merch-shelf-renderer',
+    '.ytp-ce-element', '.ytp-suggestion-set', '.ytp-cards-teaser-text', '.annotation-type-text.annotation',
+    '#offer-module', 'ytd-browse[page-subtype="home"]',
+    'ytd-rich-section-renderer', 'ytd-reel-shelf-renderer',
+    '.yt-related-chip-cloud-renderer', 'ytd-notification-topbar-button-renderer',
+    'ytd-toggle-button-renderer.style-text',
+    'ytm-watch-next-secondary-results-renderer', 'ytm-reel-shelf-renderer',
+    'ytm-comments-section-renderer', '.search-box-suggestions-container',
+    '#footer', 'ytd-guide-section-renderer:nth-of-type(5)',
+    '#live-chat-banner > .yt-live-chat-banner-manager',
+    'ytd-rich-item-renderer:has(badge-shape.yt-badge-shape--commerce)',
+    'ytm-item-section-renderer.scwnr-content:nth-of-type(1) > lazy-list > .item',
+    'ytd-compact-promoted-video-renderer', 'ytd-sponsorships-button-renderer',
+    'ytd-button-renderer[aria-label="Thanks"]'
+  ].join(',');
+  const HIDE_STYLE_ID = 'yt-blocker-hide-style';
+
+  function injectGlobalHideStyle() {
+    if (document.getElementById(HIDE_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = HIDE_STYLE_ID;
+    style.textContent = `${SELECTOR_STR} { visibility: hidden !important; }`;
+    document.head.appendChild(style);
+  }
+
+  function makeVisible(el) { el.style.setProperty('visibility', 'visible', 'important'); el.classList.remove('yt-blocker-hidden'); }
+
+  function isShortsVideo(el) { if (el.tagName !== 'YTD-VIDEO-RENDERER') return false; const link = el.querySelector('a#video-title, a#thumbnail'); if (link && link.getAttribute('href')?.includes('/shorts/')) return true; const badge = el.querySelector('ytd-thumbnail-overlay-time-status-renderer [aria-label="Shorts"], .thumbnail-overlay-badge-shape'); return !!(badge && badge.textContent.includes('SHORTS')); }
+  function isMobileShortsElement(el) { return ['YTM-REEL-ITEM-RENDERER', 'YTM-REEL-SHELF-RENDERER', 'YTM-SHORTS-LOCKUP-VIEW-MODEL', 'YTM-SHORTS-VIDEO-RENDERER'].includes(el.tagName); }
+  function isMobileBottomShortsTab(el) { if (location.hostname !== 'm.youtube.com') return false; if (el.tagName === 'YTM-PIVOT-BAR-ITEM-RENDERER' && el.getAttribute('title') === 'Shorts') return true; if (el.classList?.contains('pivot-shorts')) return true; return el.textContent?.trim() === 'Shorts'; }
+
+  // Helper: check if an element is a "For You" or "Breaking news" shelf using XPath
+  function isForYouOrBreakingShelf(el) {
+    if (!blockForYouShelf && !blockBreakingNewsShelf) return false;
+    if (el.tagName !== 'YTD-RICH-SECTION-RENDERER') return false;
+    if (blockForYouShelf) {
+      const xpathForYou = './/*[contains(translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "for you")]';
+      const result = document.evaluate(xpathForYou, el, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      if (result.singleNodeValue) return true;
+    }
+    if (blockBreakingNewsShelf) {
+      const xpathBreaking = './/*[contains(translate(text(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "breaking news")]';
+      const result = document.evaluate(xpathBreaking, el, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      if (result.singleNodeValue) return true;
+    }
+    return false;
+  }
+
+  function isUnconditionalClutter(el) {
+    const tag = el.tagName;
+    if (tag === 'YTD-WATCH-NEXT-SECONDARY-RESULTS-RENDERER' ||
+        tag === 'YTD-COMPACT-VIDEO-RENDERER' ||
+        tag === 'YTD-COMPACT-RADIO-RENDERER' ||
+        tag === 'YTD-COMMENTS' ||
+        tag === 'YTD-COMMENT-THREAD-RENDERER' ||
+        tag === 'YTD-MERCH-SHELF-RENDERER') return true;
+    if (el.matches?.('.ytp-ce-element, .ytp-suggestion-set')) return true;
+    if (el.matches?.('.ytd-browse[page-subtype="home"]')) return true;
+    if (el.matches?.('.ytd-rich-section-renderer, .ytd-reel-shelf-renderer')) return true;
+    if (el.matches?.('.yt-related-chip-cloud-renderer')) return true;
+    if (el.matches?.('ytd-notification-topbar-button-renderer')) return true;
+    if (el.matches?.('ytd-toggle-button-renderer.style-text')) return true;
+    if (el.matches?.('#offer-module, #footer, .search-box-suggestions-container')) return true;
+    if (el.matches?.('#live-chat-banner > .yt-live-chat-banner-manager')) return true;
+    if (isForYouOrBreakingShelf(el)) return true;
+    return false;
+  }
+
+  function processElement(el) {
+    if (el.getAttribute('data-processed') === 'true') return;
+    const isMobile = location.hostname === 'm.youtube.com';
+    let shouldKeep = true;
+    if (isUnconditionalClutter(el)) shouldKeep = false;
+    else if (blockAllShorts && isMobileBottomShortsTab(el)) shouldKeep = false;
+    else if (!isMobile && el.tagName === 'YTD-GUIDE-ENTRY-RENDERER' && blockAllShorts && el.querySelector('.title')?.textContent === 'Shorts') shouldKeep = false;
+    else if (!isMobile && cleanSidebar && el.tagName === 'YTD-GUIDE-SECTION-RENDERER') { const heading = el.querySelector('#guide-section-title'); if (heading && (heading.textContent === 'Explore' || heading.textContent === 'More from YouTube')) shouldKeep = false; }
+    else if (isMobile && blockAllShorts && isMobileShortsElement(el)) shouldKeep = false;
+    else if (!isMobile && (el.tagName === 'YTM-SHORTS-LOCKUP-VIEW-MODEL-V2' || el.tagName === 'YTM-SHORTS-LOCKUP-VIEW-MODEL')) { if (blockAllShorts) shouldKeep = false; else { const info = getChannelInfo(el); if (isBlockedChannel(info)) shouldKeep = false; } }
+    else if (!isMobile && blockAllShorts && el.tagName === 'GRID-SHELF-VIEW-MODEL') { const header = el.querySelector('yt-section-header-view-model'); if (header && header.textContent.includes('Shorts')) shouldKeep = false; }
+    else if (!isMobile && el.tagName === 'YTD-VIDEO-RENDERER' && isShortsVideo(el)) { if (blockAllShorts) shouldKeep = false; else { const info = getChannelInfo(el); if (isBlockedChannel(info)) shouldKeep = false; } }
+    const titleEl = el.querySelector('#video-title, #title-wrapper a, .title a, yt-lockup-metadata-view-model__title span');
+    if (titleEl && shouldBlockByKeyword(titleEl.textContent.trim())) shouldKeep = false;
+    if (el.tagName === 'YTD-VIDEO-RENDERER' && isVideoTooOld(el)) shouldKeep = false;
+    const info = getChannelInfo(el);
+    if (info && (info.displayName || info.handle) && isBlockedChannel(info)) shouldKeep = false;
+    if (!shouldKeep) hideElement(el);
+    else makeVisible(el);
+    el.setAttribute('data-processed', 'true');
+  }
+
+  // ========== Idle scanning ==========
+  let isScanning = false, scanTimeout = null;
+  function scanAllElements() {
+    if (isScanning || isScrolling) return;
+    isScanning = true;
+    let action = 'Filtering';
+    if (adBlockEnabled) action = 'Blocking ads';
+    else if (blockAllShorts) action = 'Hiding shorts';
+    else if (blockForYouShelf || blockBreakingNewsShelf) action = 'Removing shelves';
+    showSpinner(action);
+    const elements = document.querySelectorAll(SELECTOR_STR);
+    let idx = 0, total = elements.length, chunk = 20;
+    function processChunk(deadline) {
+      while (idx < total && (deadline.timeRemaining() > 0 || deadline.didTimeout)) {
+        const end = Math.min(idx + chunk, total);
+        for (let i = idx; i < end; i++) processElement(elements[i]);
+        idx = end;
+        if (idx < total && deadline.timeRemaining() < 5) chunk = 10;
+      }
+      if (idx < total) requestIdleCallback(processChunk, { timeout: 200 });
+      else { isScanning = false; flushDeltaNow(); scheduleHideSpinner(); }
+    }
+    requestIdleCallback(processChunk, { timeout: 500 });
+  }
+  function scheduleScan() { if (scanTimeout) clearTimeout(scanTimeout); scanTimeout = setTimeout(scanAllElements, 300); }
+
+  // ========== Observers ==========
+  let observer = null, urlObserver = null;
+  function startObserver() { if (observer) observer.disconnect(); observer = new MutationObserver(m => { for (const mut of m) if (mut.addedNodes.length) { scheduleScan(); break; } }); observer.observe(document.body, { childList: true, subtree: true }); }
+  function monitorNavigation() { let lastUrl = location.href; urlObserver = new MutationObserver(() => { if (location.href !== lastUrl) { lastUrl = location.href; document.querySelectorAll(SELECTOR_STR).forEach(el => { el.removeAttribute('data-processed'); if (el.style.display === 'none') el.style.display = ''; el.classList.remove('yt-blocked'); el.removeAttribute('data-blocked'); }); setTimeout(scanAllElements, 500); setTimeout(() => setupAdBlocking(), 500); } }); urlObserver.observe(document, { subtree: true, childList: true }); }
+
+  // ========== Storage listener ==========
+  chrome.storage.onChanged.addListener(async changes => {
+    let needRescan = false;
+    const relevant = ['blockedChannels','blockAllShorts','cleanSidebar','blockKeywords','enableKeywordBlocking','whitelistChannels','whitelistKeywords','whitelistMode','backgroundPlayback','adBlockEnabled','blockVideoAds','blockBannerAds','blockByUploadDate','maxVideoAgeDays','blockForYouShelf','blockBreakingNewsShelf'];
+    for (const k of relevant) if (changes[k]) { needRescan = true; break; }
+    if (!needRescan) return;
+    await loadSettings();
+    if (changes.backgroundPlayback) { if (backgroundPlayback) { const video = document.querySelector('video'); if (video) startBackgroundPlayback(video); watchForVideo(); } else { stopBackgroundPlayback(); if (videoWatcher) { videoWatcher.disconnect(); videoWatcher = null; } } }
+    if (changes.adBlockEnabled || changes.blockVideoAds || changes.blockBannerAds) setupAdBlocking();
+    document.querySelectorAll(SELECTOR_STR).forEach(el => { el.removeAttribute('data-processed'); if (el.style.display === 'none') el.style.display = ''; el.classList.remove('yt-blocked'); el.removeAttribute('data-blocked'); });
+    scanAllElements();
+  });
+
+  // ========== Init ==========
+  async function init() {
+    injectGlobalHideStyle();
+    await loadSettings();
+    createSpinner();
+    if (backgroundPlayback) { const video = document.querySelector('video'); if (video) startBackgroundPlayback(video); watchForVideo(); }
+    setupAdBlocking();
+    startObserver();
+    monitorNavigation();
+    scanAllElements();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+
+
+############################################################
+# FILE: content/dom-selectors.js
+############################################################
+
+// content/dom-selectors.js
+// Provides DOM selectors for desktop and mobile YouTube, plus mobile detection
+
+// Desktop selectors (covers videos, shorts, channel cards, playlists, sidebar entries)
+export const DESKTOP_SELECTORS = [
+  'ytd-rich-item-renderer',
+  'ytd-video-renderer',
+  'ytd-grid-video-renderer',
+  'ytd-compact-video-renderer',
+  'ytd-compact-radio-renderer',
+  'ytd-channel-renderer',
+  'ytm-shorts-lockup-view-model-v2',
+  'ytm-shorts-lockup-view-model',
+  'grid-shelf-view-model',
+  'yt-lockup-view-model',
+  'ytd-guide-entry-renderer',
+  'ytd-guide-section-renderer',
+  // Watch page clutter
+  'ytd-watch-next-secondary-results-renderer',
+  'ytd-comments',
+  'ytd-comment-thread-renderer',
+  'ytd-merch-shelf-renderer',
+  '.ytp-ce-element',
+  '.ytp-suggestion-set',
+  '.ytp-cards-teaser-text',
+  '.annotation-type-text.annotation',
+  '#offer-module',
+  'ytd-browse[page-subtype="home"]',
+  'ytd-rich-section-renderer',
+  'ytd-reel-shelf-renderer',
+  '.yt-related-chip-cloud-renderer',
+  'ytd-notification-topbar-button-renderer',
+  'ytd-toggle-button-renderer.style-text',
+  '#footer',
+  'ytd-guide-section-renderer:nth-of-type(5)',
+  '#live-chat-banner > .yt-live-chat-banner-manager',
+  'ytd-rich-item-renderer:has(badge-shape.yt-badge-shape--commerce)',
+  'ytd-compact-promoted-video-renderer',
+  'ytd-sponsorships-button-renderer',
+  'ytd-button-renderer[aria-label="Thanks"]'
+];
+
+// Mobile selectors (YouTube mobile site)
+export const MOBILE_SELECTORS = [
+  'ytm-video-with-context-renderer',
+  'ytm-compact-video-renderer',
+  'ytm-channel-renderer',
+  'ytm-reel-shelf-renderer',
+  'ytm-reel-item-renderer',
+  'ytm-shorts-lockup-view-model',
+  'ytm-shorts-video-renderer',
+  'ytm-watch-next-secondary-results-renderer',
+  'ytm-comments-section-renderer',
+  '.search-box-suggestions-container',
+  'ytm-item-section-renderer.scwnr-content:nth-of-type(1) > lazy-list > .item'
+];
+
+/**
+ * Detect if the current page is the mobile YouTube site
+ * @returns {boolean}
+ */
+export function isMobileSite() {
+  return window.location.hostname === 'm.youtube.com';
+}
+
+/**
+ * Get the active selectors based on mobile/desktop
+ * @returns {string[]}
+ */
+export function getActiveSelectors() {
+  return isMobileSite() ? MOBILE_SELECTORS : DESKTOP_SELECTORS;
+}
+
+/**
+ * Get the combined selector string for querySelectorAll
+ * @returns {string}
+ */
+export function getSelectorString() {
+  return getActiveSelectors().join(',');
+}
+
+
+############################################################
+# FILE: content/element-processor.js
+############################################################
+
+// content/element-processor.js
+// Core element processing: decides to keep or hide each element
+
+import { getSelectorString, isMobileSite } from './dom-selectors.js';
+import { getChannelInfo } from './channel-detector.js';
+import { shouldBlockByKeyword } from './keyword-matcher.js';
+import { hideElement, flushPendingDelta } from './statistics-sender.js';
+import {
+  isBlockedChannel,
+  getBlockAllShorts,
+  getCleanSidebar,
+  getBlockByUploadDate,
+  getMaxVideoAgeDays,
+  getBlockForYouShelf,
+  getBlockBreakingNewsShelf,
+  setSettingsChangeCallback
+} from './settings-loader.js';
+
+let blockAllShorts = false;
+let cleanSidebar = false;
+let blockByUploadDate = false;
+let maxVideoAgeDays = 30;
+let blockForYouShelf = false;
+let blockBreakingNewsShelf = false;
+let isScanning = false;
+
+// Update local copies when settings change
+setSettingsChangeCallback(() => {
+  blockAllShorts = getBlockAllShorts();
+  cleanSidebar = getCleanSidebar();
+  blockByUploadDate = getBlockByUploadDate();
+  maxVideoAgeDays = getMaxVideoAgeDays();
+  blockForYouShelf = getBlockForYouShelf();
+  blockBreakingNewsShelf = getBlockBreakingNewsShelf();
+  // Force rescan
+  const elements = document.querySelectorAll(getSelectorString());
+  for (const el of elements) {
+    el.removeAttribute('data-processed');
+    if (el.style.display === 'none') el.style.display = '';
+    el.classList.remove('yt-blocked');
+    el.removeAttribute('data-blocked');
+  }
+  scanAllElements();
+});
+
+// Helper: check if a video is too old based on upload date
+function isVideoTooOld(videoElement) {
+  if (!blockByUploadDate) return false;
+  const dateElem = videoElement.querySelector('#metadata-line span:nth-child(2), .ytd-video-meta-block #metadata-line span:last-child');
+  if (!dateElem) return false;
+  const dateText = dateElem.textContent.trim();
+  const match = dateText.match(/(\d+)\s+(day|week|month|year)s?\s+ago/);
+  if (match) {
+    const num = parseInt(match[1], 10);
+    const unit = match[2];
+    let days = 0;
+    if (unit === 'day') days = num;
+    else if (unit === 'week') days = num * 7;
+    else if (unit === 'month') days = num * 30;
+    else if (unit === 'year') days = num * 365;
+    return days > maxVideoAgeDays;
+  }
+  return false;
+}
+
+// Unconditional clutter removal (watch page, homepage sections, etc.)
+function isUnconditionalClutter(el) {
+  const tag = el.tagName;
+  return tag === 'YTD-WATCH-NEXT-SECONDARY-RESULTS-RENDERER' ||
+         tag === 'YTD-COMPACT-VIDEO-RENDERER' ||
+         tag === 'YTD-COMPACT-RADIO-RENDERER' ||
+         tag === 'YTD-COMMENTS' ||
+         tag === 'YTD-COMMENT-THREAD-RENDERER' ||
+         tag === 'YTD-MERCH-SHELF-RENDERER' ||
+         el.matches?.('.ytp-ce-element, .ytp-suggestion-set') ||
+         el.matches?.('.ytd-browse[page-subtype="home"]') ||
+         el.matches?.('.ytd-rich-section-renderer, .ytd-reel-shelf-renderer') ||
+         el.matches?.('.yt-related-chip-cloud-renderer') ||
+         el.matches?.('ytd-notification-topbar-button-renderer') ||
+         el.matches?.('ytd-toggle-button-renderer.style-text') ||
+         el.matches?.('#offer-module, #footer, .search-box-suggestions-container') ||
+         el.matches?.('#live-chat-banner > .yt-live-chat-banner-manager') ||
+         (blockForYouShelf && el.matches?.('ytd-rich-section-renderer:has-text(/For you/i)')) ||
+         (blockBreakingNewsShelf && el.matches?.('ytd-rich-section-renderer:has-text(/Breaking news/i)'));
+}
+
+function isShortsVideo(el) {
+  if (el.tagName !== 'YTD-VIDEO-RENDERER') return false;
+  const link = el.querySelector('a#video-title, a#thumbnail');
+  if (link && link.getAttribute('href')?.includes('/shorts/')) return true;
+  const badge = el.querySelector('ytd-thumbnail-overlay-time-status-renderer [aria-label="Shorts"], .thumbnail-overlay-badge-shape');
+  return !!(badge && badge.textContent.includes('SHORTS'));
+}
+
+function isMobileShortsElement(el) {
+  return ['YTM-REEL-ITEM-RENDERER', 'YTM-REEL-SHELF-RENDERER', 'YTM-SHORTS-LOCKUP-VIEW-MODEL', 'YTM-SHORTS-VIDEO-RENDERER'].includes(el.tagName);
+}
+
+function isMobileBottomShortsTab(el) {
+  if (location.hostname !== 'm.youtube.com') return false;
+  if (el.tagName === 'YTM-PIVOT-BAR-ITEM-RENDERER' && el.getAttribute('title') === 'Shorts') return true;
+  if (el.classList?.contains('pivot-shorts')) return true;
+  return el.textContent?.trim() === 'Shorts';
+}
+
+export function processElement(el) {
+  if (el.getAttribute('data-processed') === 'true') return;
+  const isMobile = isMobileSite();
+  let shouldKeep = true;
+
+  if (isUnconditionalClutter(el)) {
+    shouldKeep = false;
+  }
+  else if (blockAllShorts && isMobileBottomShortsTab(el)) shouldKeep = false;
+  else if (!isMobile && el.tagName === 'YTD-GUIDE-ENTRY-RENDERER' && blockAllShorts && el.querySelector('.title')?.textContent === 'Shorts') shouldKeep = false;
+  else if (!isMobile && cleanSidebar && el.tagName === 'YTD-GUIDE-SECTION-RENDERER') {
+    const heading = el.querySelector('#guide-section-title');
+    if (heading && (heading.textContent === 'Explore' || heading.textContent === 'More from YouTube')) shouldKeep = false;
+  }
+  else if (isMobile && blockAllShorts && isMobileShortsElement(el)) shouldKeep = false;
+  else if (!isMobile && (el.tagName === 'YTM-SHORTS-LOCKUP-VIEW-MODEL-V2' || el.tagName === 'YTM-SHORTS-LOCKUP-VIEW-MODEL')) {
+    if (blockAllShorts) shouldKeep = false;
+    else { const info = getChannelInfo(el); if (isBlockedChannel(info)) shouldKeep = false; }
+  }
+  else if (!isMobile && blockAllShorts && el.tagName === 'GRID-SHELF-VIEW-MODEL') {
+    const header = el.querySelector('yt-section-header-view-model');
+    if (header && header.textContent.includes('Shorts')) shouldKeep = false;
+  }
+  else if (!isMobile && el.tagName === 'YTD-VIDEO-RENDERER' && isShortsVideo(el)) {
+    if (blockAllShorts) shouldKeep = false;
+    else { const info = getChannelInfo(el); if (isBlockedChannel(info)) shouldKeep = false; }
+  }
+  const titleEl = el.querySelector('#video-title, #title-wrapper a, .title a, yt-lockup-metadata-view-model__title span');
+  if (titleEl && shouldBlockByKeyword(titleEl.textContent.trim())) shouldKeep = false;
+  if (el.tagName === 'YTD-VIDEO-RENDERER' && isVideoTooOld(el)) shouldKeep = false;
+  const info = getChannelInfo(el);
+  if (info && (info.displayName || info.handle) && isBlockedChannel(info)) shouldKeep = false;
+
+  if (!shouldKeep) hideElement(el);
+  else el.style.setProperty('visibility', 'visible', 'important');
+  el.setAttribute('data-processed', 'true');
+}
+
+// Idle scanning (with spinner)
+let scanTimeout = null;
+export function scanAllElements() {
+  if (isScanning) return;
+  isScanning = true;
+  const { showSpinner, scheduleHideSpinner } = require('./spinner.js');
+  showSpinner();
+
+  const elements = document.querySelectorAll(getSelectorString());
+  let idx = 0, total = elements.length, chunk = 20;
+  function processChunk(deadline) {
+    while (idx < total && (deadline.timeRemaining() > 0 || deadline.didTimeout)) {
+      const end = Math.min(idx + chunk, total);
+      for (let i = idx; i < end; i++) processElement(elements[i]);
+      idx = end;
+      if (idx < total && deadline.timeRemaining() < 5) chunk = 10;
+    }
+    if (idx < total) requestIdleCallback(processChunk, { timeout: 200 });
+    else {
+      isScanning = false;
+      flushPendingDelta();
+      scheduleHideSpinner();
+    }
+  }
+  requestIdleCallback(processChunk, { timeout: 500 });
+}
+
+export function scheduleScan() {
+  if (scanTimeout) clearTimeout(scanTimeout);
+  scanTimeout = setTimeout(scanAllElements, 300);
+}
+
+
+############################################################
+# FILE: content/channel-detector.js
+############################################################
+
+// content/channel-detector.js
+// Extracts channel display name and handle from YouTube elements
+
+import { isMobileSite } from './dom-selectors.js';
+
+export function getChannelInfo(element) {
+  let displayName = null, handle = null;
+  const isMobile = isMobileSite();
+  if (isMobile) {
+    const nameEl = element.querySelector('.channel-name, yt-formatted-string#channel-name');
+    if (nameEl) displayName = nameEl.textContent.trim();
+    const handleLink = element.querySelector('a[href^="/@"]');
+    if (handleLink) {
+      const match = handleLink.getAttribute('href').match(/\/@([^/?]+)/);
+      if (match) handle = '@' + match[1];
+    }
+  } else {
+    const nameSel = '#channel-name a, #owner-name a, a.ytd-channel-name, #byline-container a, #channel-title #text';
+    const nameEl = element.querySelector(nameSel);
+    if (nameEl) displayName = nameEl.textContent.trim();
+    const handleLink = element.querySelector('a[href^="/@"]');
+    if (handleLink) {
+      const match = handleLink.getAttribute('href').match(/\/@([^/?]+)/);
+      if (match) handle = '@' + match[1];
+      else if (handleLink.textContent.trim().startsWith('@')) handle = handleLink.textContent.trim();
+    }
+    if (!handle && element.textContent.includes('@')) {
+      const atMatch = element.textContent.match(/@[^\s]+/);
+      if (atMatch) handle = atMatch[0];
+    }
+  }
+  return { displayName, handle };
+}
+
+
+############################################################
+# FILE: content/keyword-matcher.js
+############################################################
+
+// content/keyword-matcher.js
+// Checks video titles against keywords and whitelist keywords
+
+let blockKeywords = [];
+let enableKeywordBlocking = false;
+let whitelistKeywords = new Set();
+let whitelistMode = false;
+
+export function updateKeywordSettings(keywords, keywordBlockingEnabled, whitelistKeywordsSet, whitelistModeEnabled) {
+  blockKeywords = keywords || [];
+  enableKeywordBlocking = keywordBlockingEnabled === true;
+  whitelistKeywords = whitelistKeywordsSet || new Set();
+  whitelistMode = whitelistModeEnabled === true;
+}
+
+function isWhitelistedKeyword(title) {
+  if (!whitelistMode || !title) return false;
+  const lowerTitle = title.toLowerCase();
+  for (const kw of whitelistKeywords) if (lowerTitle.includes(kw)) return true;
+  return false;
+}
+
+export function shouldBlockByKeyword(title) {
+  if (!title) return false;
+  const lowerTitle = title.toLowerCase();
+  if (whitelistMode) {
+    if (whitelistKeywords.size > 0) {
+      return !isWhitelistedKeyword(lowerTitle);
+    } else {
+      return true; // no whitelist keywords -> block all
+    }
+  } else {
+    if (!enableKeywordBlocking || blockKeywords.length === 0) return false;
+    for (const kw of blockKeywords) if (lowerTitle.includes(kw)) return true;
+    return false;
+  }
+}
+
+
+############################################################
+# FILE: content/statistics-sender.js
+############################################################
+
+// content/statistics-sender.js
+// Sends block counts to background (batched, using session storage)
+
+let pendingDelta = 0;
+let deltaTimer = null;
+
+export function hideElement(el) {
+  if (!el || el.getAttribute('data-blocked') === 'true') return;
+  el.style.setProperty('display', 'none', 'important');
+  el.classList.add('yt-blocked');
+  el.setAttribute('data-blocked', 'true');
+  pendingDelta++;
+  if (deltaTimer) clearTimeout(deltaTimer);
+  deltaTimer = setTimeout(() => {
+    if (pendingDelta > 0) {
+      chrome.runtime.sendMessage({ type: 'BLOCKS_COUNT', delta: pendingDelta });
+      pendingDelta = 0;
+    }
+  }, 500);
+}
+
+export function flushPendingDelta() {
+  if (deltaTimer) clearTimeout(deltaTimer);
+  if (pendingDelta > 0) {
+    chrome.runtime.sendMessage({ type: 'BLOCKS_COUNT', delta: pendingDelta });
+    pendingDelta = 0;
+  }
+}
+
+
+############################################################
+# FILE: content/mutation-observer.js
+############################################################
+
+// content/mutation-observer.js
+// Handles MutationObserver for dynamic content and SPA navigation detection
+
+import { getSelectorString } from './dom-selectors.js';
+import { scanAllElements, scheduleScan } from './element-processor.js';
+
+let observer = null;
+let urlObserver = null;
+
+/**
+ * Start a MutationObserver to watch for added DOM nodes and trigger a rescan
+ */
+export function startObserver() {
+  if (observer) observer.disconnect();
+  observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      if (mutation.addedNodes.length) {
+        scheduleScan();
+        break;
+      }
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+/**
+ * Monitor YouTube SPA navigation (URL changes) and reset blocking state
+ */
+export function monitorNavigation() {
+  let lastUrl = location.href;
+  urlObserver = new MutationObserver(() => {
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
+      // Reset all processed flags and hidden styles for the new page
+      const elements = document.querySelectorAll(getSelectorString());
+      for (const el of elements) {
+        el.removeAttribute('data-processed');
+        if (el.style.display === 'none') el.style.display = '';
+        el.classList.remove('yt-blocked');
+        el.removeAttribute('data-blocked');
+      }
+      // Re-scan after a short delay to let the page render
+      setTimeout(scanAllElements, 500);
+    }
+  });
+  urlObserver.observe(document, { subtree: true, childList: true });
+}
+
+
+############################################################
+# FILE: content/spinner.js
+############################################################
+
+// content/spinner.js
+// Creates, shows, and hides the filtering spinner (dynamic text)
+
+let spinner = null;
+let hideTimeout = null;
+let currentAction = 'Filtering';
+
+/**
+ * Update the spinner text (e.g., "Blocking ads...")
+ * @param {string} action
+ */
+export function updateSpinnerText(action) {
+  currentAction = action;
+  if (spinner) {
+    const textSpan = spinner.querySelector('.spinner-text');
+    if (textSpan) textSpan.textContent = action + '...';
+  }
+}
+
+/**
+ * Create the spinner element and append it to the page body
+ */
+export function createSpinner() {
+  if (document.getElementById('yt-blocker-spinner')) return;
+  const div = document.createElement('div');
+  div.id = 'yt-blocker-spinner';
+  div.innerHTML = `<div class="spinner-icon"></div><span class="spinner-text">Filtering...</span>`;
+  document.body.appendChild(div);
+  spinner = div;
+}
+
+/**
+ * Show the spinner (adds 'show' class) with optional action text
+ * @param {string} action - e.g., 'Blocking ads'
+ */
+export function showSpinner(action = 'Filtering') {
+  if (!spinner) createSpinner();
+  updateSpinnerText(action);
+  requestAnimationFrame(() => {
+    if (spinner) spinner.classList.add('show');
+  });
+}
+
+/**
+ * Hide the spinner (removes 'show' class)
+ */
+export function hideSpinner() {
+  if (spinner) spinner.classList.remove('show');
+}
+
+/**
+ * Schedule hiding the spinner after a short delay (to avoid flickering)
+ */
+export function scheduleHideSpinner() {
+  if (hideTimeout) clearTimeout(hideTimeout);
+  hideTimeout = setTimeout(() => {
+    hideSpinner();
+    hideTimeout = null;
+  }, 300);
+}
+
+
+############################################################
+# FILE: popup/popup.html
+############################################################
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>YouTube Blocker</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    body {
+      width: 100%;
+      max-width: 400px;
+      margin: 0 auto;
+      background: #f5f7fb;
+    }
+    .popup-container {
+      max-height: 600px;
+      overflow-y: auto;
+      padding: 0;
+    }
+    .search-box {
+      margin-bottom: 12px;
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      font-size: 14px;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #1a202c; color: #e2e8f0; }
+      .card { background: #2d3748; }
+      .toggle-row { color: #e2e8f0; }
+      .btn-secondary { background: #4a5568; }
+      .search-box { background: #4a5568; color: white; border-color: #2d3748; }
+    }
+  </style>
+</head>
+<body>
+  <div class="popup-container">
+    <div class="header">
+      <h1>🚫 YouTube Blocker</h1>
+      <p>Quick controls</p>
+    </div>
+
+    <div class="popup-content" style="padding: 16px;">
+      <!-- Quick toggles -->
+      <div class="card">
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="blockAllShortsCheckbox">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>🚫 Block ALL Shorts</span>
+        </div>
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="cleanSidebarCheckbox">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>🧹 Clean Sidebar (Explore, More)</span>
+        </div>
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="backgroundPlaybackCheckbox">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>🎵 Background Playback</span>
+        </div>
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="forceDesktopModeCheckbox">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>💻 Force Desktop Mode</span>
+        </div>
+      </div>
+
+      <!-- Ad Blocker Card -->
+      <div class="card">
+        <div class="card-header">📢 Ad Blocker</div>
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="adBlockToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>Block Ads (Master Switch)</span>
+        </div>
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="videoAdsToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>Block Video Ads</span>
+        </div>
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="bannerAdsToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>Block Banner / Overlay Ads</span>
+        </div>
+        <div class="stats-row">
+          <div class="stat-item"><span class="stat-value" id="adsBlockedToday">0</span><span class="stat-label">Ads today</span></div>
+          <div class="stat-item"><span class="stat-value" id="adsBlockedTotal">0</span><span class="stat-label">Total ads</span></div>
+        </div>
+      </div>
+
+      <!-- Block channel with search -->
+      <div class="card">
+        <div class="card-header">➕ Block Channel</div>
+        <div class="input-group">
+          <input type="text" id="channelInput" placeholder="Name, @handle, or URL">
+          <button id="addBtn" class="btn btn-primary">Block</button>
+        </div>
+        <input type="text" id="blocklistSearch" class="search-box" placeholder="Search blocked channels...">
+        <div class="list-header">
+          <span>Blocked Channels</span>
+          <span class="badge" id="blocklistCount">0</span>
+        </div>
+        <ul id="blocklist" class="list"></ul>
+        <button id="clearAllBtn" class="btn btn-danger btn-sm">Clear All Channels</button>
+      </div>
+
+      <!-- Statistics preview + link to full options -->
+      <div class="card stats-card">
+        <div class="stats-row">
+          <div class="stat-item">
+            <span class="stat-value" id="totalBlocks">0</span>
+            <span class="stat-label">Total blocked</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value" id="todayBlocks">0</span>
+            <span class="stat-label">Today</span>
+          </div>
+        </div>
+        <button id="openOptionsBtn" class="btn btn-secondary">⚙️ Full Settings & Stats</button>
+      </div>
+    </div>
+
+    <footer class="footer">
+      💡 Right‑click any video/channel link → "Block this channel"
+    </footer>
+  </div>
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
+
+
+
+############################################################
+# FILE: popup/popup.js
+############################################################
+
+// popup/popup.js
+import { STORAGE_KEYS, MESSAGE_TYPES } from '../shared/constants.js';
+import { sendToBackground, notifyYouTubeTabs } from '../shared/messaging.js';
+
+// DOM elements
+const channelInput = document.getElementById('channelInput');
+const addBtn = document.getElementById('addBtn');
+const blocklistUl = document.getElementById('blocklist');
+const blocklistSearch = document.getElementById('blocklistSearch');
+const clearAllBtn = document.getElementById('clearAllBtn');
+const blocklistCount = document.getElementById('blocklistCount');
+const blockAllShortsCheckbox = document.getElementById('blockAllShortsCheckbox');
+const cleanSidebarCheckbox = document.getElementById('cleanSidebarCheckbox');
+const backgroundPlaybackCheckbox = document.getElementById('backgroundPlaybackCheckbox');
+const forceDesktopModeCheckbox = document.getElementById('forceDesktopModeCheckbox');
+const totalBlocksSpan = document.getElementById('totalBlocks');
+const todayBlocksSpan = document.getElementById('todayBlocks');
+const openOptionsBtn = document.getElementById('openOptionsBtn');
+const adBlockToggle = document.getElementById('adBlockToggle');
+const videoAdsToggle = document.getElementById('videoAdsToggle');
+const bannerAdsToggle = document.getElementById('bannerAdsToggle');
+const adsBlockedTodaySpan = document.getElementById('adsBlockedToday');
+const adsBlockedTotalSpan = document.getElementById('adsBlockedTotal');
+
+let currentBlocklist = [];
+let filteredBlocklist = [];
+
+function extractChannelIdentifier(input) {
+  let trimmed = input.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes('youtube.com') || trimmed.includes('youtu.be')) {
+    try {
+      let url = new URL(trimmed);
+      let match = url.pathname.match(/\/@([^/?]+)/);
+      if (match) return '@' + match[1];
+      match = url.pathname.match(/\/c\/([^/?]+)/);
+      if (match) return match[1];
+      match = url.pathname.match(/\/channel\/([^/?]+)/);
+      if (match) return match[1];
+    } catch(e) {}
+  }
+  if (trimmed.startsWith('@')) return trimmed;
+  return trimmed;
+}
+
+async function loadAllSettings() {
+  const result = await chrome.storage.sync.get([
+    STORAGE_KEYS.blockedChannels,
+    STORAGE_KEYS.blockAllShorts,
+    STORAGE_KEYS.cleanSidebar,
+    STORAGE_KEYS.backgroundPlayback,
+    STORAGE_KEYS.forceDesktopMode,
+    STORAGE_KEYS.adBlockEnabled,
+    STORAGE_KEYS.blockVideoAds,
+    STORAGE_KEYS.blockBannerAds
+  ]);
+  currentBlocklist = result[STORAGE_KEYS.blockedChannels] || [];
+  filteredBlocklist = [...currentBlocklist];
+  renderBlocklist();
+  blockAllShortsCheckbox.checked = result[STORAGE_KEYS.blockAllShorts] === true;
+  cleanSidebarCheckbox.checked = result[STORAGE_KEYS.cleanSidebar] === true;
+  backgroundPlaybackCheckbox.checked = result[STORAGE_KEYS.backgroundPlayback] === true;
+  if (forceDesktopModeCheckbox) forceDesktopModeCheckbox.checked = result[STORAGE_KEYS.forceDesktopMode] === true;
+  adBlockToggle.checked = result[STORAGE_KEYS.adBlockEnabled] !== false;
+  videoAdsToggle.checked = result[STORAGE_KEYS.blockVideoAds] !== false;
+  bannerAdsToggle.checked = result[STORAGE_KEYS.blockBannerAds] !== false;
+  updateAdTogglesUI();
+}
+
+function updateAdTogglesUI() {
+  const enabled = adBlockToggle.checked;
+  videoAdsToggle.disabled = !enabled;
+  bannerAdsToggle.disabled = !enabled;
+}
+
+async function saveBlocklist() {
+  await chrome.storage.sync.set({ [STORAGE_KEYS.blockedChannels]: currentBlocklist });
+  filteredBlocklist = [...currentBlocklist];
+  renderBlocklist();
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+}
+
+function renderBlocklist() {
+  blocklistUl.innerHTML = '';
+  blocklistCount.textContent = filteredBlocklist.length;
+  if (filteredBlocklist.length === 0) {
+    const empty = document.createElement('li');
+    empty.textContent = 'No blocked channels';
+    empty.style.justifyContent = 'center';
+    empty.style.background = 'transparent';
+    blocklistUl.appendChild(empty);
+    return;
+  }
+  filteredBlocklist.forEach((channel, idx) => {
+    const li = document.createElement('li');
+    const span = document.createElement('span');
+    span.textContent = channel;
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = 'Remove';
+    removeBtn.className = 'remove-btn';
+    const originalIndex = currentBlocklist.indexOf(channel);
+    removeBtn.addEventListener('click', () => removeChannel(originalIndex));
+    li.appendChild(span);
+    li.appendChild(removeBtn);
+    blocklistUl.appendChild(li);
+  });
+}
+
+function filterBlocklist() {
+  const query = blocklistSearch.value.trim().toLowerCase();
+  filteredBlocklist = currentBlocklist.filter(ch => ch.toLowerCase().includes(query));
+  renderBlocklist();
+}
+
+blocklistSearch.addEventListener('input', filterBlocklist);
+
+async function addChannel() {
+  let raw = channelInput.value.trim();
+  if (!raw) return;
+  let identifier = extractChannelIdentifier(raw);
+  if (!identifier) return;
+  if (!currentBlocklist.includes(identifier)) {
+    currentBlocklist.push(identifier);
+    await saveBlocklist();
+    channelInput.value = '';
+    filterBlocklist();
+  } else {
+    channelInput.style.borderColor = '#fc8181';
+    setTimeout(() => channelInput.style.borderColor = '#e2e8f0', 1000);
+  }
+}
+
+async function removeChannel(index) {
+  currentBlocklist.splice(index, 1);
+  await saveBlocklist();
+  filterBlocklist();
+}
+
+async function clearAllChannels() {
+  if (currentBlocklist.length > 0 && confirm('Remove all blocked channels?')) {
+    currentBlocklist = [];
+    await saveBlocklist();
+    filterBlocklist();
+  }
+}
+
+async function loadStatistics() {
+  try {
+    const stats = await sendToBackground(MESSAGE_TYPES.GET_STATS);
+    if (stats) {
+      totalBlocksSpan.textContent = (stats.totalBlocks || 0).toLocaleString();
+      const today = stats.dailyStats || { count: 0 };
+      todayBlocksSpan.textContent = today.count.toLocaleString();
+    }
+  } catch (err) { console.error('Failed to load statistics:', err); }
+}
+
+async function loadAdStats() {
+  const { adsBlockedToday = 0, adsBlockedTotal = 0 } = await chrome.storage.sync.get([
+    STORAGE_KEYS.adsBlockedToday, STORAGE_KEYS.adsBlockedTotal
+  ]);
+  adsBlockedTodaySpan.textContent = adsBlockedToday;
+  adsBlockedTotalSpan.textContent = adsBlockedTotal;
+}
+
+// Event listeners for toggles
+blockAllShortsCheckbox.addEventListener('change', async () => {
+  await chrome.storage.sync.set({ [STORAGE_KEYS.blockAllShorts]: blockAllShortsCheckbox.checked });
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+});
+cleanSidebarCheckbox.addEventListener('change', async () => {
+  await chrome.storage.sync.set({ [STORAGE_KEYS.cleanSidebar]: cleanSidebarCheckbox.checked });
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+});
+backgroundPlaybackCheckbox.addEventListener('change', async () => {
+  const isEnabled = backgroundPlaybackCheckbox.checked;
+  await chrome.storage.sync.set({ [STORAGE_KEYS.backgroundPlayback]: isEnabled });
+  if (isEnabled && forceDesktopModeCheckbox) {
+    await chrome.storage.sync.set({ [STORAGE_KEYS.forceDesktopMode]: true });
+    forceDesktopModeCheckbox.checked = true;
+  }
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+});
+forceDesktopModeCheckbox?.addEventListener('change', async () => {
+  await chrome.storage.sync.set({ [STORAGE_KEYS.forceDesktopMode]: forceDesktopModeCheckbox.checked });
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+});
+addBtn.addEventListener('click', addChannel);
+clearAllBtn.addEventListener('click', clearAllChannels);
+channelInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') addChannel(); });
+openOptionsBtn.addEventListener('click', () => { chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html') }); });
+
+// Ad blocker toggles
+adBlockToggle.addEventListener('change', async () => {
+  const enabled = adBlockToggle.checked;
+  await chrome.storage.sync.set({ [STORAGE_KEYS.adBlockEnabled]: enabled });
+  updateAdTogglesUI();
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+});
+videoAdsToggle.addEventListener('change', async () => {
+  await chrome.storage.sync.set({ [STORAGE_KEYS.blockVideoAds]: videoAdsToggle.checked });
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+});
+bannerAdsToggle.addEventListener('change', async () => {
+  await chrome.storage.sync.set({ [STORAGE_KEYS.blockBannerAds]: bannerAdsToggle.checked });
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+});
+
+async function init() {
+  await loadAllSettings();
+  await loadStatistics();
+  await loadAdStats();
+  setInterval(loadAdStats, 5000);
+}
+init();
+
+
+
+############################################################
+# FILE: popup/popup.css
+############################################################
+
+/* popup/popup.css */
+/* Minimal overrides – most styles are in the global styles.css */
+/* This file is kept for completeness; you may delete it if not needed. */
+
+/* Example: ensure the search box fits well */
+.search-box {
+  margin-bottom: 12px;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .search-box {
+    background: #4a5568;
+    color: white;
+    border-color: #2d3748;
+  }
+}
+
+
+
+############################################################
+# FILE: options/options.html
+############################################################
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Blocker – Full Settings</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    body { max-width: 1000px; margin: 0 auto; padding: 20px; background: #f5f7fb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    @media (prefers-color-scheme: dark) { body { background: #1a202c; color: #e2e8f0; } .card { background: #2d3748; } .btn-secondary { background: #4a5568; } .toggle-row { color: #e2e8f0; } }
+    .tabs { display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+    .tab-btn { padding: 10px 20px; border: none; border-radius: 30px; background: #edf2f7; cursor: pointer; font-weight: 600; transition: 0.2s; }
+    .tab-btn.active { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+    .card { background: white; border-radius: 20px; padding: 20px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+    .card-header { font-weight: 700; font-size: 18px; margin-bottom: 16px; color: #2d3748; }
+    .input-group { display: flex; gap: 8px; margin-bottom: 12px; }
+    .input-group input { flex: 1; padding: 10px; border: 1px solid #e2e8f0; border-radius: 12px; }
+    .btn { padding: 8px 16px; border-radius: 12px; font-weight: 600; cursor: pointer; }
+    .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+    .btn-secondary { background: #4a5568; color: white; }
+    .btn-danger { background: #fc8181; color: white; }
+    .toggle-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .toggle { position: relative; display: inline-block; width: 48px; height: 24px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #cbd5e0; transition: 0.2s; border-radius: 34px; }
+    .toggle-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: 0.2s; border-radius: 50%; }
+    .toggle input:checked + .toggle-slider { background: linear-gradient(135deg, #667eea, #764ba2); }
+    .toggle input:checked + .toggle-slider:before { transform: translateX(24px); }
+    .list { list-style: none; max-height: 200px; overflow-y: auto; margin: 12px 0; }
+    .list li { background: #f7fafc; margin: 6px 0; padding: 8px 12px; border-radius: 40px; display: flex; justify-content: space-between; align-items: center; }
+    .remove-item { background: #fc8181; border: none; padding: 4px 12px; border-radius: 20px; color: white; cursor: pointer; }
+    .stats-row { display: flex; justify-content: space-around; margin: 16px 0; }
+    .stat-item { text-align: center; }
+    .stat-value { font-size: 32px; font-weight: 800; color: #667eea; }
+    .stat-label { font-size: 12px; color: #718096; }
+    hr { margin: 20px 0; }
+  </style>
+</head>
+<body>
+  <h1>🚫 YouTube Blocker</h1>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="general">General</button>
+    <button class="tab-btn" data-tab="blocking">Blocking</button>
+    <button class="tab-btn" data-tab="whitelist">Whitelist</button>
+    <button class="tab-btn" data-tab="adblocker">Ad Blocker</button>
+    <button class="tab-btn" data-tab="advanced">Advanced</button>
+    <button class="tab-btn" data-tab="backup">Backup</button>
+  </div>
+
+  <!-- General Tab -->
+  <div id="general" class="tab-pane active">
+    <div class="card">
+      <div class="card-header">Quick Toggles</div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="blockAllShortsCheckbox"><span class="toggle-slider"></span></label><span>Block ALL Shorts</span></div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="cleanSidebarCheckbox"><span class="toggle-slider"></span></label><span>Clean Sidebar (Explore, More)</span></div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="backgroundPlaybackCheckbox"><span class="toggle-slider"></span></label><span>Background Playback</span></div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="forceDesktopModeCheckbox"><span class="toggle-slider"></span></label><span>Force Desktop Mode</span></div>
+    </div>
+    <div class="card">
+      <div class="card-header">Homepage Sections</div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="blockForYouShelf"><span class="toggle-slider"></span></label><span>Block "For You" shelf</span></div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="blockBreakingNewsShelf"><span class="toggle-slider"></span></label><span>Block "Breaking news" shelf</span></div>
+    </div>
+    <div class="card">
+      <div class="card-header">Video Age Filter</div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="blockByUploadDate"><span class="toggle-slider"></span></label><span>Block videos older than</span></div>
+      <div class="input-group"><input type="number" id="maxVideoAgeDays" min="1" max="3650" step="1"><span>days</span></div>
+    </div>
+  </div>
+
+  <!-- Blocking Tab -->
+  <div id="blocking" class="tab-pane">
+    <div class="card">
+      <div class="card-header">Blocked Channels</div>
+      <div class="input-group"><input type="text" id="channelInput" placeholder="Name, @handle, or URL"><button id="addChannelBtn" class="btn btn-primary">Block</button></div>
+      <input type="text" id="blocklistSearch" placeholder="Search blocked channels..." style="width:100%; margin-bottom:8px; padding:8px; border-radius:12px;">
+      <div class="list-header"><span>Blocked Channels</span><span class="badge" id="blocklistCount">0</span></div>
+      <ul id="blocklist" class="list"></ul>
+      <button id="clearAllChannelsBtn" class="btn btn-danger btn-sm">Clear All</button>
+    </div>
+    <div class="card">
+      <div class="card-header">Keyword Blocking</div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="enableKeywordBlocking"><span class="toggle-slider"></span></label><span>Enable keyword blocking</span></div>
+      <div class="input-group"><input type="text" id="keywordInput" placeholder="Keyword"><button id="addKeywordBtn" class="btn btn-secondary-sm">Add</button></div>
+      <textarea id="bulkKeywords" placeholder="Comma-separated: reaction, clickbait" rows="2"></textarea>
+      <button id="addBulkKeywordsBtn" class="btn btn-secondary btn-sm">Add Multiple</button>
+      <ul id="keywordList" class="list compact"></ul>
+      <button id="clearKeywordsBtn" class="btn btn-danger btn-sm">Clear Keywords</button>
+    </div>
+  </div>
+
+  <!-- Whitelist Tab -->
+  <div id="whitelist" class="tab-pane">
+    <div class="card">
+      <div class="card-header">Whitelist Mode</div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="whitelistModeCheckbox"><span class="toggle-slider"></span></label><span>Enable Whitelist Mode</span></div>
+      <p>Only whitelisted channels & keywords are allowed.</p>
+      <div class="input-group"><input type="text" id="whitelistChannelInput" placeholder="Channel name or @handle"><button id="addWhitelistChannelBtn" class="btn btn-secondary-sm">Add</button></div>
+      <ul id="whitelistChannelsList" class="list compact"></ul>
+      <div class="input-group"><input type="text" id="whitelistKeywordInput" placeholder="Keyword"><button id="addWhitelistKeywordBtn" class="btn btn-secondary-sm">Add</button></div>
+      <ul id="whitelistKeywordsList" class="list compact"></ul>
+      <button id="clearWhitelistBtn" class="btn btn-danger btn-sm">Clear Whitelist</button>
+      <hr>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="whitelistSearchRedirectCheckbox"><span class="toggle-slider"></span></label><span>Redirect homepage to search (selected keyword)</span></div>
+      <div class="input-group"><input type="text" id="whitelistSearchKeywordInput" placeholder="Search keyword"><button id="addWhitelistSearchKeywordBtn" class="btn btn-secondary-sm">Add</button></div>
+      <ul id="whitelistSearchKeywordsList" class="list compact"></ul>
+      <button id="clearWhitelistSearchBtn" class="btn btn-danger btn-sm">Clear Search Keywords</button>
+    </div>
+  </div>
+
+  <!-- Ad Blocker Tab -->
+  <div id="adblocker" class="tab-pane">
+    <div class="card">
+      <div class="card-header">Ad Blocker Settings</div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="adBlockToggle"><span class="toggle-slider"></span></label><span>Block Ads (Master Switch)</span></div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="videoAdsToggle"><span class="toggle-slider"></span></label><span>Block Video Ads</span></div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="bannerAdsToggle"><span class="toggle-slider"></span></label><span>Block Banner / Overlay Ads</span></div>
+      <div class="stats-row">
+        <div class="stat-item"><span class="stat-value" id="adsBlockedTodayOptions">0</span><span class="stat-label">Ads today</span></div>
+        <div class="stat-item"><span class="stat-value" id="adsBlockedTotalOptions">0</span><span class="stat-label">Total ads</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Advanced Tab -->
+  <div id="advanced" class="tab-pane">
+    <div class="card">
+      <div class="card-header">Encryption</div>
+      <div class="toggle-row"><label class="toggle"><input type="checkbox" id="encryptionToggle"><span class="toggle-slider"></span></label><span>Encrypt blocklist & whitelist (passphrase required)</span></div>
+      <div class="input-group"><input type="password" id="encryptionPassphrase" placeholder="Enter passphrase"><button id="applyEncryptionBtn" class="btn btn-secondary">Apply</button></div>
+      <p class="note">Data will be encrypted locally and stored. You need the passphrase to decrypt.</p>
+    </div>
+    <div class="card">
+      <div class="card-header">Blocklist Statistics</div>
+      <div class="stats-row">
+        <div class="stat-item"><span class="stat-value" id="totalBlocksOptions">0</span><span class="stat-label">Total channel blocks</span></div>
+        <div class="stat-item"><span class="stat-value" id="todayBlocksOptions">0</span><span class="stat-label">Today</span></div>
+        <div class="stat-item"><span class="stat-value" id="weekBlocksOptions">0</span><span class="stat-label">Last 7 days</span></div>
+      </div>
+      <button id="resetStatsBtn" class="btn btn-secondary btn-sm">Reset Statistics</button>
+    </div>
+  </div>
+
+  <!-- Backup Tab -->
+  <div id="backup" class="tab-pane">
+    <div class="card">
+      <div class="card-header">Export / Import</div>
+      <div class="action-buttons"><button id="exportBtn" class="btn btn-primary">Export All Data</button><label for="fileInput" class="btn btn-secondary">Import File</label><input type="file" id="fileInput" accept=".json" hidden></div>
+    </div>
+  </div>
+
+  <script src="options.js" type="module"></script>
+</body>
+</html>
+
+
+
+############################################################
+# FILE: options/options.js
+############################################################
+
+// options/options.js
+// Main orchestrator for the options page – imports all sub‑modules and initialises them
+
+import { loadBlocklist } from './options-blocklist.js';
+import { loadToggles, initTogglesListeners } from './options-toggles.js';
+import { loadKeywords, initKeywordListeners } from './options-keywords.js';
+import { loadWhitelist, initWhitelistListeners } from './options-whitelist.js';
+import { loadStatistics, initStatsListeners } from './options-stats.js';
+import { initExportImportListeners } from './options-export-import.js';
+import { initEncryptionListeners } from './options-encryption.js';
+import { initHomepageToggles, loadHomepageSettings } from './options-homepage.js';
+import { initAgeFilter, loadAgeFilterSettings } from './options-agefilter.js';
+
+// Tab switching
+function initTabs() {
+  const tabs = document.querySelectorAll('.tab-btn');
+  const panes = document.querySelectorAll('.tab-pane');
+  tabs.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tabId = btn.dataset.tab;
+      tabs.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      panes.forEach(pane => pane.classList.remove('active'));
+      document.getElementById(tabId).classList.add('active');
+    });
+  });
+}
+
+async function initOptions() {
+  initTabs();
+  await loadBlocklist();
+  await loadToggles();
+  await loadKeywords();
+  await loadWhitelist();
+  await loadStatistics();
+  await loadHomepageSettings();
+  await loadAgeFilterSettings();
+  initTogglesListeners();
+  initKeywordListeners();
+  initWhitelistListeners();
+  initStatsListeners();
+  initExportImportListeners();
+  initEncryptionListeners();
+  initHomepageToggles();
+  initAgeFilter();
+}
+
+initOptions();
+
+
+
+############################################################
+# FILE: options/options-blocklist.js
+############################################################
+
+// options/options-blocklist.js
+// Manages the blocked channels list (add, remove, clear, search, render)
+
+import { STORAGE_KEYS, MESSAGE_TYPES } from '../shared/constants.js';
+import { notifyYouTubeTabs } from '../shared/messaging.js';
+
+// DOM elements (assumed to exist in options.html)
+const channelInput = document.getElementById('channelInput');
+const addChannelBtn = document.getElementById('addChannelBtn');
+const blocklistUl = document.getElementById('blocklist');
+const blocklistSearch = document.getElementById('blocklistSearch');
+const clearAllChannelsBtn = document.getElementById('clearAllChannelsBtn');
+const blocklistCountSpan = document.getElementById('blocklistCount');
+
+let currentBlocklist = [];
+let filteredBlocklist = [];
+
+/**
+ * Extract a canonical channel identifier from user input
+ * Supports: channel name, @handle, or full YouTube URL
+ */
+function extractChannelIdentifier(input) {
+  let trimmed = input.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes('youtube.com') || trimmed.includes('youtu.be')) {
+    try {
+      let url = new URL(trimmed);
+      let match = url.pathname.match(/\/@([^/?]+)/);
+      if (match) return '@' + match[1];
+      match = url.pathname.match(/\/c\/([^/?]+)/);
+      if (match) return match[1];
+      match = url.pathname.match(/\/channel\/([^/?]+)/);
+      if (match) return match[1];
+    } catch (e) {}
+  }
+  if (trimmed.startsWith('@')) return trimmed;
+  return trimmed;
+}
+
+/**
+ * Render the blocked channels list in the UI (uses filtered list)
+ */
+function renderBlocklist() {
+  blocklistUl.innerHTML = '';
+  blocklistCountSpan.textContent = filteredBlocklist.length;
+  if (filteredBlocklist.length === 0) {
+    const empty = document.createElement('li');
+    empty.textContent = 'No blocked channels';
+    empty.style.justifyContent = 'center';
+    empty.style.background = 'transparent';
+    blocklistUl.appendChild(empty);
+    return;
+  }
+  filteredBlocklist.forEach((channel, idx) => {
+    const li = document.createElement('li');
+    const span = document.createElement('span');
+    span.textContent = channel;
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = 'Remove';
+    removeBtn.className = 'remove-item';
+    // Find original index in currentBlocklist for removal
+    const originalIndex = currentBlocklist.indexOf(channel);
+    removeBtn.addEventListener('click', () => removeChannel(originalIndex));
+    li.appendChild(span);
+    li.appendChild(removeBtn);
+    blocklistUl.appendChild(li);
+  });
+}
+
+/**
+ * Update filtered list based on search query and re-render
+ */
+function filterBlocklist() {
+  const query = blocklistSearch.value.trim().toLowerCase();
+  filteredBlocklist = currentBlocklist.filter(ch => ch.toLowerCase().includes(query));
+  renderBlocklist();
+}
+
+/**
+ * Save the current blocklist to storage and notify YouTube tabs
+ */
+async function saveBlocklist() {
+  await chrome.storage.sync.set({ [STORAGE_KEYS.blockedChannels]: currentBlocklist });
+  filteredBlocklist = [...currentBlocklist];
+  renderBlocklist();
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+}
+
+/**
+ * Add a new channel to the blocklist
+ */
+export async function addChannel() {
+  let raw = channelInput.value.trim();
+  if (!raw) return;
+  let identifier = extractChannelIdentifier(raw);
+  if (!identifier) return;
+  if (!currentBlocklist.includes(identifier)) {
+    currentBlocklist.push(identifier);
+    await saveBlocklist();
+    channelInput.value = '';
+    filterBlocklist(); // re-apply search
+  } else {
+    channelInput.style.borderColor = '#fc8181';
+    setTimeout(() => channelInput.style.borderColor = '#e2e8f0', 1000);
+  }
+}
+
+/**
+ * Remove a channel at a specific index
+ */
+async function removeChannel(index) {
+  currentBlocklist.splice(index, 1);
+  await saveBlocklist();
+  filterBlocklist();
+}
+
+/**
+ * Clear the entire blocklist
+ */
+export async function clearAllChannels() {
+  if (currentBlocklist.length > 0 && confirm('Clear all blocked channels?')) {
+    currentBlocklist = [];
+    await saveBlocklist();
+    filterBlocklist();
+  }
+}
+
+/**
+ * Load the blocklist from storage
+ */
+export async function loadBlocklist() {
+  const result = await chrome.storage.sync.get(STORAGE_KEYS.blockedChannels);
+  currentBlocklist = result[STORAGE_KEYS.blockedChannels] || [];
+  filteredBlocklist = [...currentBlocklist];
+  renderBlocklist();
+  if (blocklistSearch) {
+    blocklistSearch.value = '';
+    blocklistSearch.addEventListener('input', filterBlocklist);
+  }
+}
+
+// Attach event listeners (called from options.js)
+addChannelBtn.addEventListener('click', addChannel);
+channelInput.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') addChannel();
+});
+clearAllChannelsBtn.addEventListener('click', clearAllChannels);
+
+
+
+############################################################
+# FILE: options/options-keywords.js
+############################################################
+
+// options/options-keywords.js
+// Manages keyword blocking (add, bulk add, remove, clear, enable/disable toggle)
+
+import { STORAGE_KEYS, MESSAGE_TYPES } from '../shared/constants.js';
+import { notifyYouTubeTabs } from '../shared/messaging.js';
+
+// DOM elements (assumed to exist in options.html)
+const keywordInput = document.getElementById('keywordInput');
+const addKeywordBtn = document.getElementById('addKeywordBtn');
+const keywordList = document.getElementById('keywordList');
+const clearKeywordsBtn = document.getElementById('clearKeywordsBtn');
+const bulkKeywords = document.getElementById('bulkKeywords');
+const addBulkKeywordsBtn = document.getElementById('addBulkKeywordsBtn');
+const enableKeywordBlockingCheckbox = document.getElementById('enableKeywordBlocking');
+
+let currentKeywords = [];
+let keywordBlockingEnabled = false;
+
+/**
+ * Render the keyword list in the UI
+ */
+function renderKeywordList() {
+  keywordList.innerHTML = '';
+  if (currentKeywords.length === 0) {
+    const empty = document.createElement('li');
+    empty.textContent = 'No keywords';
+    empty.style.justifyContent = 'center';
+    empty.style.background = 'transparent';
+    keywordList.appendChild(empty);
+    return;
+  }
+  currentKeywords.forEach((kw, idx) => {
+    const li = document.createElement('li');
+    li.textContent = kw;
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = 'Remove';
+    removeBtn.className = 'remove-item';
+    removeBtn.addEventListener('click', () => removeKeyword(idx));
+    li.appendChild(removeBtn);
+    keywordList.appendChild(li);
+  });
+}
+
+/**
+ * Save keywords to storage and notify
+ */
+async function saveKeywords() {
+  await chrome.storage.sync.set({ [STORAGE_KEYS.blockKeywords]: currentKeywords });
+  renderKeywordList();
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+}
+
+/**
+ * Save keyword blocking enabled state
+ */
+async function saveKeywordBlockingEnabled(enabled) {
+  await chrome.storage.sync.set({ [STORAGE_KEYS.enableKeywordBlocking]: enabled });
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+}
+
+/**
+ * Add a single keyword
+ */
+async function addKeyword() {
+  let kw = keywordInput.value.trim().toLowerCase();
+  if (!kw) return;
+  if (!currentKeywords.includes(kw)) {
+    currentKeywords.push(kw);
+    await saveKeywords();
+    keywordInput.value = '';
+  } else {
+    keywordInput.style.borderColor = '#fc8181';
+    setTimeout(() => keywordInput.style.borderColor = '#e2e8f0', 1000);
+  }
+}
+
+/**
+ * Add multiple keywords from textarea (comma separated)
+ */
+async function addBulkKeywords() {
+  let text = bulkKeywords.value.trim();
+  if (!text) return;
+  const words = text.split(',').map(w => w.trim().toLowerCase()).filter(w => w.length > 0);
+  let added = false;
+  for (const word of words) {
+    if (!currentKeywords.includes(word)) {
+      currentKeywords.push(word);
+      added = true;
+    }
+  }
+  if (added) {
+    await saveKeywords();
+    bulkKeywords.value = '';
+  } else {
+    bulkKeywords.style.borderColor = '#fc8181';
+    setTimeout(() => bulkKeywords.style.borderColor = '#e2e8f0', 1000);
+  }
+}
+
+/**
+ * Remove keyword by index
+ */
+async function removeKeyword(index) {
+  currentKeywords.splice(index, 1);
+  await saveKeywords();
+}
+
+/**
+ * Clear all keywords
+ */
+async function clearAllKeywords() {
+  if (currentKeywords.length > 0 && confirm('Clear all keywords?')) {
+    currentKeywords = [];
+    await saveKeywords();
+  }
+}
+
+/**
+ * Toggle keyword blocking on/off
+ */
+async function toggleKeywordBlocking() {
+  keywordBlockingEnabled = enableKeywordBlockingCheckbox.checked;
+  await saveKeywordBlockingEnabled(keywordBlockingEnabled);
+}
+
+/**
+ * Load keywords from storage
+ */
+export async function loadKeywords() {
+  const result = await chrome.storage.sync.get([
+    STORAGE_KEYS.blockKeywords,
+    STORAGE_KEYS.enableKeywordBlocking
+  ]);
+  currentKeywords = result[STORAGE_KEYS.blockKeywords] || [];
+  keywordBlockingEnabled = result[STORAGE_KEYS.enableKeywordBlocking] === true;
+  enableKeywordBlockingCheckbox.checked = keywordBlockingEnabled;
+  renderKeywordList();
+}
+
+/**
+ * Attach event listeners for keyword controls
+ */
+export function initKeywordListeners() {
+  addKeywordBtn.addEventListener('click', addKeyword);
+  keywordInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') addKeyword();
+  });
+  clearKeywordsBtn.addEventListener('click', clearAllKeywords);
+  addBulkKeywordsBtn.addEventListener('click', addBulkKeywords);
+  enableKeywordBlockingCheckbox.addEventListener('change', toggleKeywordBlocking);
+}
+
+
+
+############################################################
+# FILE: options/options-whitelist.js
+############################################################
+
+// options/options-whitelist.js
+// Manages whitelist channels, whitelist keywords, whitelist mode toggle,
+// and whitelist search redirect (homepage → search)
+
+import { STORAGE_KEYS, MESSAGE_TYPES } from '../shared/constants.js';
+import { notifyYouTubeTabs } from '../shared/messaging.js';
+
+// DOM elements
+const whitelistModeCheckbox = document.getElementById('whitelistModeCheckbox');
+const whitelistChannelInput = document.getElementById('whitelistChannelInput');
+const addWhitelistChannelBtn = document.getElementById('addWhitelistChannelBtn');
+const whitelistKeywordInput = document.getElementById('whitelistKeywordInput');
+const addWhitelistKeywordBtn = document.getElementById('addWhitelistKeywordBtn');
+const whitelistChannelsList = document.getElementById('whitelistChannelsList');
+const whitelistKeywordsList = document.getElementById('whitelistKeywordsList');
+const clearWhitelistBtn = document.getElementById('clearWhitelistBtn');
+const whitelistSearchRedirectCheckbox = document.getElementById('whitelistSearchRedirectCheckbox');
+const whitelistSearchKeywordInput = document.getElementById('whitelistSearchKeywordInput');
+const addWhitelistSearchKeywordBtn = document.getElementById('addWhitelistSearchKeywordBtn');
+const whitelistSearchKeywordsList = document.getElementById('whitelistSearchKeywordsList');
+const clearWhitelistSearchBtn = document.getElementById('clearWhitelistSearchBtn');
+
+let whitelistChannels = [];
+let whitelistKeywords = [];
+let whitelistSearchKeywords = [];
+let whitelistSearchSelected = '';
+
+// ========== Helper ==========
+async function notifyContentScripts() {
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+}
+
+// ========== Whitelist Channels ==========
+function renderWhitelistChannels() {
+  whitelistChannelsList.innerHTML = '';
+  if (whitelistChannels.length === 0) {
+    const empty = document.createElement('li');
+    empty.textContent = 'No whitelist channels';
+    empty.style.justifyContent = 'center';
+    empty.style.background = 'transparent';
+    whitelistChannelsList.appendChild(empty);
+    return;
+  }
+  whitelistChannels.forEach((item, idx) => {
+    const li = document.createElement('li');
+    li.textContent = item;
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = 'Remove';
+    removeBtn.className = 'remove-item';
+    removeBtn.addEventListener('click', () => removeWhitelistChannel(idx));
+    li.appendChild(removeBtn);
+    whitelistChannelsList.appendChild(li);
+  });
+}
+
+async function saveWhitelistChannels() {
+  await chrome.storage.sync.set({ [STORAGE_KEYS.whitelistChannels]: whitelistChannels });
+  renderWhitelistChannels();
+  await notifyContentScripts();
+}
+
+async function addWhitelistChannel() {
+  let val = whitelistChannelInput.value.trim();
+  if (!val) return;
+  if (!whitelistChannels.includes(val)) {
+    whitelistChannels.push(val);
+    await saveWhitelistChannels();
+    whitelistChannelInput.value = '';
+  } else {
+    whitelistChannelInput.style.borderColor = '#fc8181';
+    setTimeout(() => whitelistChannelInput.style.borderColor = '#e2e8f0', 1000);
+  }
+}
+
+async function removeWhitelistChannel(index) {
+  whitelistChannels.splice(index, 1);
+  await saveWhitelistChannels();
+}
+
+// ========== Whitelist Keywords ==========
+function renderWhitelistKeywords() {
+  whitelistKeywordsList.innerHTML = '';
+  if (whitelistKeywords.length === 0) {
+    const empty = document.createElement('li');
+    empty.textContent = 'No whitelist keywords';
+    empty.style.justifyContent = 'center';
+    empty.style.background = 'transparent';
+    whitelistKeywordsList.appendChild(empty);
+    return;
+  }
+  whitelistKeywords.forEach((item, idx) => {
+    const li = document.createElement('li');
+    li.textContent = item;
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = 'Remove';
+    removeBtn.className = 'remove-item';
+    removeBtn.addEventListener('click', () => removeWhitelistKeyword(idx));
+    li.appendChild(removeBtn);
+    whitelistKeywordsList.appendChild(li);
+  });
+}
+
+async function saveWhitelistKeywords() {
+  await chrome.storage.sync.set({ [STORAGE_KEYS.whitelistKeywords]: whitelistKeywords });
+  renderWhitelistKeywords();
+  await notifyContentScripts();
+}
+
+async function addWhitelistKeyword() {
+  let val = whitelistKeywordInput.value.trim().toLowerCase();
+  if (!val) return;
+  if (!whitelistKeywords.includes(val)) {
+    whitelistKeywords.push(val);
+    await saveWhitelistKeywords();
+    whitelistKeywordInput.value = '';
+  } else {
+    whitelistKeywordInput.style.borderColor = '#fc8181';
+    setTimeout(() => whitelistKeywordInput.style.borderColor = '#e2e8f0', 1000);
+  }
+}
+
+async function removeWhitelistKeyword(index) {
+  whitelistKeywords.splice(index, 1);
+  await saveWhitelistKeywords();
+}
+
+async function clearWhitelist() {
+  if ((whitelistChannels.length || whitelistKeywords.length) && confirm('Clear all whitelist entries?')) {
+    whitelistChannels = [];
+    whitelistKeywords = [];
+    await saveWhitelistChannels();
+    await saveWhitelistKeywords();
+  }
+}
+
+async function toggleWhitelistMode() {
+  const enabled = whitelistModeCheckbox.checked;
+  await chrome.storage.sync.set({ [STORAGE_KEYS.whitelistMode]: enabled });
+  await notifyContentScripts();
+}
+
+// ========== Whitelist Search Redirect ==========
+function renderWhitelistSearchKeywords() {
+  whitelistSearchKeywordsList.innerHTML = '';
+  if (whitelistSearchKeywords.length === 0) {
+    const empty = document.createElement('li');
+    empty.textContent = 'No search keywords';
+    empty.style.justifyContent = 'center';
+    empty.style.background = 'transparent';
+    whitelistSearchKeywordsList.appendChild(empty);
+    return;
+  }
+  whitelistSearchKeywords.forEach((kw, idx) => {
+    const li = document.createElement('li');
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'whitelistSearchKeyword';
+    radio.value = kw;
+    radio.checked = (kw === whitelistSearchSelected);
+    radio.addEventListener('change', () => {
+      if (radio.checked) selectWhitelistSearchKeyword(kw);
+    });
+    const label = document.createElement('span');
+    label.textContent = kw;
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = 'Remove';
+    removeBtn.className = 'remove-item';
+    removeBtn.addEventListener('click', () => removeWhitelistSearchKeyword(idx));
+    li.appendChild(radio);
+    li.appendChild(label);
+    li.appendChild(removeBtn);
+    whitelistSearchKeywordsList.appendChild(li);
+  });
+}
+
+async function selectWhitelistSearchKeyword(keyword) {
+  whitelistSearchSelected = keyword;
+  await chrome.storage.sync.set({ [STORAGE_KEYS.whitelistSearchSelected]: keyword });
+  await notifyContentScripts();
+}
+
+async function saveWhitelistSearchKeywords() {
+  await chrome.storage.sync.set({
+    [STORAGE_KEYS.whitelistSearchKeywords]: whitelistSearchKeywords,
+    [STORAGE_KEYS.whitelistSearchSelected]: whitelistSearchSelected
+  });
+  renderWhitelistSearchKeywords();
+  await notifyContentScripts();
+}
+
+async function addWhitelistSearchKeyword() {
+  let kw = whitelistSearchKeywordInput.value.trim().toLowerCase();
+  if (!kw) return;
+  if (!whitelistSearchKeywords.includes(kw)) {
+    whitelistSearchKeywords.push(kw);
+    if (whitelistSearchKeywords.length === 1) whitelistSearchSelected = kw;
+    await saveWhitelistSearchKeywords();
+    whitelistSearchKeywordInput.value = '';
+  } else {
+    whitelistSearchKeywordInput.style.borderColor = '#fc8181';
+    setTimeout(() => whitelistSearchKeywordInput.style.borderColor = '#e2e8f0', 1000);
+  }
+}
+
+async function removeWhitelistSearchKeyword(index) {
+  whitelistSearchKeywords.splice(index, 1);
+  if (whitelistSearchSelected === whitelistSearchKeywords[index]) {
+    whitelistSearchSelected = whitelistSearchKeywords[0] || '';
+  }
+  await saveWhitelistSearchKeywords();
+}
+
+async function clearWhitelistSearch() {
+  if (whitelistSearchKeywords.length > 0 && confirm('Clear all whitelist search keywords?')) {
+    whitelistSearchKeywords = [];
+    whitelistSearchSelected = '';
+    await saveWhitelistSearchKeywords();
+  }
+}
+
+async function toggleWhitelistSearchRedirect() {
+  const enabled = whitelistSearchRedirectCheckbox.checked;
+  await chrome.storage.sync.set({ [STORAGE_KEYS.whitelistSearchRedirect]: enabled });
+  await notifyContentScripts();
+}
+
+// ========== Load all whitelist data ==========
+export async function loadWhitelist() {
+  const result = await chrome.storage.sync.get([
+    STORAGE_KEYS.whitelistChannels,
+    STORAGE_KEYS.whitelistKeywords,
+    STORAGE_KEYS.whitelistMode,
+    STORAGE_KEYS.whitelistSearchRedirect,
+    STORAGE_KEYS.whitelistSearchKeywords,
+    STORAGE_KEYS.whitelistSearchSelected
+  ]);
+  whitelistChannels = result[STORAGE_KEYS.whitelistChannels] || [];
+  whitelistKeywords = result[STORAGE_KEYS.whitelistKeywords] || [];
+  whitelistModeCheckbox.checked = result[STORAGE_KEYS.whitelistMode] === true;
+  renderWhitelistChannels();
+  renderWhitelistKeywords();
+  whitelistSearchRedirectCheckbox.checked = result[STORAGE_KEYS.whitelistSearchRedirect] === true;
+  whitelistSearchKeywords = result[STORAGE_KEYS.whitelistSearchKeywords] || [];
+  whitelistSearchSelected = result[STORAGE_KEYS.whitelistSearchSelected] || (whitelistSearchKeywords[0] || '');
+  renderWhitelistSearchKeywords();
+}
+
+// ========== Attach event listeners ==========
+export function initWhitelistListeners() {
+  whitelistModeCheckbox.addEventListener('change', toggleWhitelistMode);
+  addWhitelistChannelBtn.addEventListener('click', addWhitelistChannel);
+  whitelistChannelInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') addWhitelistChannel(); });
+  addWhitelistKeywordBtn.addEventListener('click', addWhitelistKeyword);
+  whitelistKeywordInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') addWhitelistKeyword(); });
+  clearWhitelistBtn.addEventListener('click', clearWhitelist);
+  whitelistSearchRedirectCheckbox.addEventListener('change', toggleWhitelistSearchRedirect);
+  addWhitelistSearchKeywordBtn.addEventListener('click', addWhitelistSearchKeyword);
+  whitelistSearchKeywordInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') addWhitelistSearchKeyword(); });
+  clearWhitelistSearchBtn.addEventListener('click', clearWhitelistSearch);
+}
+
+
+
+############################################################
+# FILE: options/options-stats.js
+############################################################
+
+// options/options-stats.js
+// Manages statistics display (total, today, week) and reset functionality
+
+import { MESSAGE_TYPES } from '../shared/constants.js';
+import { sendToBackground } from '../shared/messaging.js';
+
+// DOM elements (assumed to exist in options.html)
+const totalBlocksSpan = document.getElementById('totalBlocksOptions');
+const todayBlocksSpan = document.getElementById('todayBlocksOptions');
+const weekBlocksSpan = document.getElementById('weekBlocksOptions');
+const resetStatsBtn = document.getElementById('resetStatsBtn');
+
+/**
+ * Load statistics from background and update the UI
+ */
+export async function loadStatistics() {
+  try {
+    const stats = await sendToBackground(MESSAGE_TYPES.GET_STATS);
+    if (stats) {
+      totalBlocksSpan.textContent = (stats.totalBlocks || 0).toLocaleString();
+      const today = stats.dailyStats || { count: 0 };
+      todayBlocksSpan.textContent = today.count.toLocaleString();
+      const weekly = stats.weeklyStats || [];
+      const weekTotal = weekly.reduce((sum, day) => sum + day.count, 0);
+      weekBlocksSpan.textContent = weekTotal.toLocaleString();
+    }
+  } catch (err) {
+    console.error('Failed to load statistics:', err);
+  }
+}
+
+/**
+ * Reset all statistics (total, daily, weekly) after confirmation
+ */
+export async function resetStatistics() {
+  if (confirm('Reset all block statistics? This cannot be undone.')) {
+    const today = new Date().toISOString().split('T')[0];
+    await chrome.storage.sync.set({
+      totalBlocks: 0,
+      dailyStats: { date: today, count: 0 },
+      weeklyStats: []
+    });
+    // Clear the badge number
+    chrome.action.setBadgeText({ text: '' });
+    // Reload the UI
+    await loadStatistics();
+  }
+}
+
+/**
+ * Attach event listeners for statistics
+ */
+export function initStatsListeners() {
+  resetStatsBtn.addEventListener('click', resetStatistics);
+}
+
+
+
+############################################################
+# FILE: options/options-export-import.js
+############################################################
+
+// options/options-export-import.js
+import { STORAGE_KEYS } from '../shared/constants.js';
+
+const exportBtn = document.getElementById('exportBtn');
+const fileInput = document.getElementById('fileInput');
+
+export async function exportAllData() {
+  const allKeys = [
+    STORAGE_KEYS.blockedChannels,
+    STORAGE_KEYS.blockAllShorts,
+    STORAGE_KEYS.cleanSidebar,
+    STORAGE_KEYS.blockKeywords,
+    STORAGE_KEYS.enableKeywordBlocking,
+    STORAGE_KEYS.whitelistChannels,
+    STORAGE_KEYS.whitelistKeywords,
+    STORAGE_KEYS.whitelistMode,
+    STORAGE_KEYS.whitelistSearchRedirect,
+    STORAGE_KEYS.whitelistSearchKeywords,
+    STORAGE_KEYS.whitelistSearchSelected,
+    STORAGE_KEYS.backgroundPlayback,
+    STORAGE_KEYS.forceDesktopMode,
+    STORAGE_KEYS.adBlockEnabled,
+    STORAGE_KEYS.blockVideoAds,
+    STORAGE_KEYS.blockBannerAds,
+    STORAGE_KEYS.adsBlockedToday,
+    STORAGE_KEYS.adsBlockedTotal,
+    STORAGE_KEYS.adsLastDate,
+    STORAGE_KEYS.blockByUploadDate,
+    STORAGE_KEYS.maxVideoAgeDays,
+    STORAGE_KEYS.blockForYouShelf,
+    STORAGE_KEYS.blockBreakingNewsShelf,
+    'totalBlocks',
+    'dailyStats',
+    'weeklyStats'
+  ];
+  const data = await chrome.storage.sync.get(allKeys);
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `yt-blocker-backup-${new Date().toISOString().slice(0, 19)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function importData(file) {
+  const text = await file.text();
+  let importObj;
+  try {
+    importObj = JSON.parse(text);
+  } catch (e) {
+    alert('Invalid JSON file');
+    return;
+  }
+  const allKeys = [
+    STORAGE_KEYS.blockedChannels,
+    STORAGE_KEYS.blockAllShorts,
+    STORAGE_KEYS.cleanSidebar,
+    STORAGE_KEYS.blockKeywords,
+    STORAGE_KEYS.enableKeywordBlocking,
+    STORAGE_KEYS.whitelistChannels,
+    STORAGE_KEYS.whitelistKeywords,
+    STORAGE_KEYS.whitelistMode,
+    STORAGE_KEYS.whitelistSearchRedirect,
+    STORAGE_KEYS.whitelistSearchKeywords,
+    STORAGE_KEYS.whitelistSearchSelected,
+    STORAGE_KEYS.backgroundPlayback,
+    STORAGE_KEYS.forceDesktopMode,
+    STORAGE_KEYS.adBlockEnabled,
+    STORAGE_KEYS.blockVideoAds,
+    STORAGE_KEYS.blockBannerAds,
+    STORAGE_KEYS.adsBlockedToday,
+    STORAGE_KEYS.adsBlockedTotal,
+    STORAGE_KEYS.adsLastDate,
+    STORAGE_KEYS.blockByUploadDate,
+    STORAGE_KEYS.maxVideoAgeDays,
+    STORAGE_KEYS.blockForYouShelf,
+    STORAGE_KEYS.blockBreakingNewsShelf,
+    'totalBlocks',
+    'dailyStats',
+    'weeklyStats'
+  ];
+  for (const key of allKeys) {
+    if (importObj.hasOwnProperty(key)) {
+      await chrome.storage.sync.set({ [key]: importObj[key] });
+    }
+  }
+  window.location.reload();
+}
+
+export function initExportImportListeners() {
+  exportBtn.addEventListener('click', exportAllData);
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length) importData(e.target.files[0]);
+    fileInput.value = '';
+  });
+}
+
+
+
+############################################################
+# FILE: options/options-toggles.js
+############################################################
+
+// options/options-toggles.js
+// Manages toggle switches: Block ALL Shorts, Clean Sidebar, Background Playback, Force Desktop Mode,
+// plus Ad Blocker toggles (master, video ads, banner ads)
+
+import { STORAGE_KEYS, MESSAGE_TYPES } from '../shared/constants.js';
+import { notifyYouTubeTabs } from '../shared/messaging.js';
+
+// DOM elements (assumed to exist in options.html)
+const blockAllShortsCheckbox = document.getElementById('blockAllShortsCheckbox');
+const cleanSidebarCheckbox = document.getElementById('cleanSidebarCheckbox');
+const backgroundPlaybackCheckbox = document.getElementById('backgroundPlaybackCheckbox');
+const forceDesktopModeCheckbox = document.getElementById('forceDesktopModeCheckbox');
+const adBlockToggle = document.getElementById('adBlockToggle');
+const videoAdsToggle = document.getElementById('videoAdsToggle');
+const bannerAdsToggle = document.getElementById('bannerAdsToggle');
+
+/**
+ * Load the current state of all toggles from storage
+ */
+export async function loadToggles() {
+  const result = await chrome.storage.sync.get([
+    STORAGE_KEYS.blockAllShorts,
+    STORAGE_KEYS.cleanSidebar,
+    STORAGE_KEYS.backgroundPlayback,
+    STORAGE_KEYS.forceDesktopMode,
+    STORAGE_KEYS.adBlockEnabled,
+    STORAGE_KEYS.blockVideoAds,
+    STORAGE_KEYS.blockBannerAds
+  ]);
+  blockAllShortsCheckbox.checked = result[STORAGE_KEYS.blockAllShorts] === true;
+  cleanSidebarCheckbox.checked = result[STORAGE_KEYS.cleanSidebar] === true;
+  backgroundPlaybackCheckbox.checked = result[STORAGE_KEYS.backgroundPlayback] === true;
+  if (forceDesktopModeCheckbox) forceDesktopModeCheckbox.checked = result[STORAGE_KEYS.forceDesktopMode] === true;
+  if (adBlockToggle) adBlockToggle.checked = result[STORAGE_KEYS.adBlockEnabled] !== false;
+  if (videoAdsToggle) videoAdsToggle.checked = result[STORAGE_KEYS.blockVideoAds] !== false;
+  if (bannerAdsToggle) bannerAdsToggle.checked = result[STORAGE_KEYS.blockBannerAds] !== false;
+  updateAdTogglesUI();
+}
+
+/**
+ * Enable/disable sub‑toggles based on master ad block toggle
+ */
+function updateAdTogglesUI() {
+  if (!adBlockToggle) return;
+  const enabled = adBlockToggle.checked;
+  if (videoAdsToggle) videoAdsToggle.disabled = !enabled;
+  if (bannerAdsToggle) bannerAdsToggle.disabled = !enabled;
+}
+
+/**
+ * Attach event listeners for all toggles
+ */
+export function initTogglesListeners() {
+  blockAllShortsCheckbox.addEventListener('change', async () => {
+    await chrome.storage.sync.set({ [STORAGE_KEYS.blockAllShorts]: blockAllShortsCheckbox.checked });
+    await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+  });
+  cleanSidebarCheckbox.addEventListener('change', async () => {
+    await chrome.storage.sync.set({ [STORAGE_KEYS.cleanSidebar]: cleanSidebarCheckbox.checked });
+    await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+  });
+  backgroundPlaybackCheckbox.addEventListener('change', async (e) => {
+    const isEnabled = e.target.checked;
+    await chrome.storage.sync.set({ [STORAGE_KEYS.backgroundPlayback]: isEnabled });
+    if (isEnabled && forceDesktopModeCheckbox) {
+      await chrome.storage.sync.set({ [STORAGE_KEYS.forceDesktopMode]: true });
+      forceDesktopModeCheckbox.checked = true;
+    }
+    await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+  });
+  if (forceDesktopModeCheckbox) {
+    forceDesktopModeCheckbox.addEventListener('change', async () => {
+      await chrome.storage.sync.set({ [STORAGE_KEYS.forceDesktopMode]: forceDesktopModeCheckbox.checked });
+      await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+    });
+  }
+  if (adBlockToggle) {
+    adBlockToggle.addEventListener('change', async () => {
+      const enabled = adBlockToggle.checked;
+      await chrome.storage.sync.set({ [STORAGE_KEYS.adBlockEnabled]: enabled });
+      updateAdTogglesUI();
+      await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+    });
+  }
+  if (videoAdsToggle) {
+    videoAdsToggle.addEventListener('change', async () => {
+      await chrome.storage.sync.set({ [STORAGE_KEYS.blockVideoAds]: videoAdsToggle.checked });
+      await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+    });
+  }
+  if (bannerAdsToggle) {
+    bannerAdsToggle.addEventListener('change', async () => {
+      await chrome.storage.sync.set({ [STORAGE_KEYS.blockBannerAds]: bannerAdsToggle.checked });
+      await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+    });
+  }
+}
+
+
+
+############################################################
+# FILE: options/options-encryption.js
+############################################################
+
+// options/options-encryption.js
+import { STORAGE_KEYS } from '../shared/constants.js';
+import { encryptData, decryptData } from '../shared/encryption.js';
+import { notifyYouTubeTabs } from '../shared/messaging.js';
+
+const encryptionToggle = document.getElementById('encryptionToggle');
+const encryptionPassphraseInput = document.getElementById('encryptionPassphrase');
+const applyEncryptionBtn = document.getElementById('applyEncryptionBtn');
+
+// Helper: generate random salt (16 bytes)
+function generateSalt() {
+  const array = new Uint8Array(16);
+  crypto.getRandomValues(array);
+  return Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Collect all sensitive data (blocklist, whitelist, keywords, etc.)
+async function collectSensitiveData() {
+  const keys = [
+    STORAGE_KEYS.blockedChannels,
+    STORAGE_KEYS.blockKeywords,
+    STORAGE_KEYS.whitelistChannels,
+    STORAGE_KEYS.whitelistKeywords,
+    STORAGE_KEYS.whitelistSearchKeywords,
+    STORAGE_KEYS.whitelistSearchSelected
+  ];
+  const data = await chrome.storage.sync.get(keys);
+  return data;
+}
+
+// Encrypt and store encrypted data, then clear plain text
+async function enableEncryption(passphrase) {
+  const salt = generateSalt();
+  const data = await collectSensitiveData();
+  const encrypted = await encryptData(data, passphrase, salt);
+  await chrome.storage.sync.set({
+    [STORAGE_KEYS.encryptionEnabled]: true,
+    [STORAGE_KEYS.encryptionSalt]: salt,
+    [STORAGE_KEYS.encryptedData]: encrypted
+  });
+  // Clear plain text sensitive data
+  const clearKeys = [
+    STORAGE_KEYS.blockedChannels,
+    STORAGE_KEYS.blockKeywords,
+    STORAGE_KEYS.whitelistChannels,
+    STORAGE_KEYS.whitelistKeywords,
+    STORAGE_KEYS.whitelistSearchKeywords,
+    STORAGE_KEYS.whitelistSearchSelected
+  ];
+  for (const key of clearKeys) {
+    await chrome.storage.sync.set({ [key]: [] }); // or default empty
+  }
+  // Store passphrase in chrome.storage.local (not synced)
+  await chrome.storage.local.set({ encryptionPassphrase: passphrase });
+  console.log('Encryption enabled');
+}
+
+// Decrypt data and restore to sync storage
+async function disableEncryption(passphrase) {
+  const { encryptionSalt, encryptedData } = await chrome.storage.sync.get([
+    STORAGE_KEYS.encryptionSalt,
+    STORAGE_KEYS.encryptedData
+  ]);
+  if (!encryptionSalt || !encryptedData) {
+    console.error('No encrypted data found');
+    return false;
+  }
+  try {
+    const decrypted = await decryptData(encryptedData, passphrase, encryptionSalt);
+    // Restore decrypted data to sync storage
+    for (const [key, value] of Object.entries(decrypted)) {
+      await chrome.storage.sync.set({ [key]: value });
+    }
+    // Remove encryption flags
+    await chrome.storage.sync.remove([
+      STORAGE_KEYS.encryptionEnabled,
+      STORAGE_KEYS.encryptionSalt,
+      STORAGE_KEYS.encryptedData
+    ]);
+    await chrome.storage.local.remove('encryptionPassphrase');
+    console.log('Encryption disabled');
+    return true;
+  } catch (err) {
+    console.error('Decryption failed: wrong passphrase?', err);
+    return false;
+  }
+}
+
+async function applyEncryption() {
+  const passphrase = encryptionPassphraseInput.value.trim();
+  if (!passphrase) {
+    alert('Please enter a passphrase');
+    return;
+  }
+  const isEnabled = encryptionToggle.checked;
+  if (isEnabled) {
+    await enableEncryption(passphrase);
+    alert('Encryption enabled. Sensitive data is now encrypted.');
+  } else {
+    const success = await disableEncryption(passphrase);
+    if (success) {
+      alert('Encryption disabled. Data restored.');
+    } else {
+      alert('Failed to decrypt. Check your passphrase.');
+      encryptionToggle.checked = true; // revert toggle
+    }
+  }
+  // Reload options page to reflect changes
+  window.location.reload();
+}
+
+export async function loadEncryptionSettings() {
+  const { encryptionEnabled = false } = await chrome.storage.sync.get(STORAGE_KEYS.encryptionEnabled);
+  encryptionToggle.checked = encryptionEnabled;
+}
+
+export function initEncryptionListeners() {
+  applyEncryptionBtn.addEventListener('click', applyEncryption);
+}
+
+
+############################################################
+# FILE: options/options-homepage.js
+############################################################
+
+// options/options-homepage.js
+// Manages the "Block For You shelf" and "Block Breaking news shelf" toggles
+
+import { STORAGE_KEYS, MESSAGE_TYPES } from '../shared/constants.js';
+import { notifyYouTubeTabs } from '../shared/messaging.js';
+
+// DOM elements (assumed to exist in options.html)
+const blockForYouShelfCheckbox = document.getElementById('blockForYouShelf');
+const blockBreakingNewsShelfCheckbox = document.getElementById('blockBreakingNewsShelf');
+
+/**
+ * Load the current homepage section settings from storage
+ */
+export async function loadHomepageSettings() {
+  const result = await chrome.storage.sync.get([
+    STORAGE_KEYS.blockForYouShelf,
+    STORAGE_KEYS.blockBreakingNewsShelf
+  ]);
+  blockForYouShelfCheckbox.checked = result[STORAGE_KEYS.blockForYouShelf] === true;
+  blockBreakingNewsShelfCheckbox.checked = result[STORAGE_KEYS.blockBreakingNewsShelf] === true;
+}
+
+/**
+ * Save the homepage section settings and notify content scripts
+ */
+async function saveHomepageSettings() {
+  await chrome.storage.sync.set({
+    [STORAGE_KEYS.blockForYouShelf]: blockForYouShelfCheckbox.checked,
+    [STORAGE_KEYS.blockBreakingNewsShelf]: blockBreakingNewsShelfCheckbox.checked
+  });
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+}
+
+/**
+ * Attach event listeners for homepage section toggles
+ */
+export function initHomepageToggles() {
+  blockForYouShelfCheckbox.addEventListener('change', saveHomepageSettings);
+  blockBreakingNewsShelfCheckbox.addEventListener('change', saveHomepageSettings);
+}
+
+
+############################################################
+# FILE: options/options-agefilter.js
+############################################################
+
+// options/options-agefilter.js
+// Manages the "Block videos older than X days" feature
+
+import { STORAGE_KEYS, MESSAGE_TYPES } from '../shared/constants.js';
+import { notifyYouTubeTabs } from '../shared/messaging.js';
+
+// DOM elements (assumed to exist in options.html)
+const blockByUploadDateCheckbox = document.getElementById('blockByUploadDate');
+const maxVideoAgeDaysInput = document.getElementById('maxVideoAgeDays');
+
+/**
+ * Load the current age filter settings from storage
+ */
+export async function loadAgeFilterSettings() {
+  const result = await chrome.storage.sync.get([
+    STORAGE_KEYS.blockByUploadDate,
+    STORAGE_KEYS.maxVideoAgeDays
+  ]);
+  blockByUploadDateCheckbox.checked = result[STORAGE_KEYS.blockByUploadDate] === true;
+  maxVideoAgeDaysInput.value = result[STORAGE_KEYS.maxVideoAgeDays] ?? 30;
+}
+
+/**
+ * Save the age filter settings and notify content scripts
+ */
+async function saveAgeFilterSettings() {
+  const enabled = blockByUploadDateCheckbox.checked;
+  const days = parseInt(maxVideoAgeDaysInput.value, 10) || 30;
+  await chrome.storage.sync.set({
+    [STORAGE_KEYS.blockByUploadDate]: enabled,
+    [STORAGE_KEYS.maxVideoAgeDays]: days
+  });
+  await notifyYouTubeTabs(MESSAGE_TYPES.SETTINGS_UPDATED);
+}
+
+/**
+ * Attach event listeners for age filter controls
+ */
+export function initAgeFilter() {
+  blockByUploadDateCheckbox.addEventListener('change', saveAgeFilterSettings);
+  maxVideoAgeDaysInput.addEventListener('change', saveAgeFilterSettings);
+}
+
+
+############################################################
+# FILE: shared/constants.js
+############################################################
+
+// shared/constants.js
+export const STORAGE_KEYS = {
+  // Core settings
+  blockedChannels: 'blockedChannels',
+  blockAllShorts: 'blockAllShorts',
+  cleanSidebar: 'cleanSidebar',
+
+  // Keyword blocking
+  blockKeywords: 'blockKeywords',
+  enableKeywordBlocking: 'enableKeywordBlocking',
+
+  // Whitelist
+  whitelistChannels: 'whitelistChannels',
+  whitelistKeywords: 'whitelistKeywords',
+  whitelistMode: 'whitelistMode',
+
+  // Whitelist search redirect
+  whitelistSearchRedirect: 'whitelistSearchRedirect',
+  whitelistSearchKeywords: 'whitelistSearchKeywords',
+  whitelistSearchSelected: 'whitelistSearchSelected',
+
+  // Background playback & desktop mode
+  backgroundPlayback: 'backgroundPlayback',
+  forceDesktopMode: 'forceDesktopMode',
+
+  // Ad Blocker settings & stats
+  adBlockEnabled: 'adBlockEnabled',
+  blockVideoAds: 'blockVideoAds',
+  blockBannerAds: 'blockBannerAds',
+  adsBlockedToday: 'adsBlockedToday',
+  adsBlockedTotal: 'adsBlockedTotal',
+  adsLastDate: 'adsLastDate',
+
+  // Statistics (channel blocks)
+  totalBlocks: 'totalBlocks',
+  dailyStats: 'dailyStats',
+  weeklyStats: 'weeklyStats',
+
+  // Video age filter
+  blockByUploadDate: 'blockByUploadDate',
+  maxVideoAgeDays: 'maxVideoAgeDays',
+
+  // Homepage shelves
+  blockForYouShelf: 'blockForYouShelf',
+  blockBreakingNewsShelf: 'blockBreakingNewsShelf',
+
+  // Encryption
+  encryptionEnabled: 'encryptionEnabled',
+  encryptionSalt: 'encryptionSalt',
+  encryptedData: 'encryptedData'
+};
+
+export const DEFAULTS = {
+  [STORAGE_KEYS.blockedChannels]: [],
+  [STORAGE_KEYS.blockAllShorts]: false,
+  [STORAGE_KEYS.cleanSidebar]: false,
+  [STORAGE_KEYS.blockKeywords]: [],
+  [STORAGE_KEYS.enableKeywordBlocking]: false,
+  [STORAGE_KEYS.whitelistChannels]: [],
+  [STORAGE_KEYS.whitelistKeywords]: [],
+  [STORAGE_KEYS.whitelistMode]: false,
+  [STORAGE_KEYS.whitelistSearchRedirect]: false,
+  [STORAGE_KEYS.whitelistSearchKeywords]: [],
+  [STORAGE_KEYS.whitelistSearchSelected]: '',
+  [STORAGE_KEYS.backgroundPlayback]: false,
+  [STORAGE_KEYS.forceDesktopMode]: false,
+  [STORAGE_KEYS.adBlockEnabled]: true,
+  [STORAGE_KEYS.blockVideoAds]: true,
+  [STORAGE_KEYS.blockBannerAds]: true,
+  [STORAGE_KEYS.adsBlockedToday]: 0,
+  [STORAGE_KEYS.adsBlockedTotal]: 0,
+  [STORAGE_KEYS.adsLastDate]: new Date().toDateString(),
+  [STORAGE_KEYS.totalBlocks]: 0,
+  [STORAGE_KEYS.dailyStats]: { date: '', count: 0 },
+  [STORAGE_KEYS.weeklyStats]: [],
+  [STORAGE_KEYS.blockByUploadDate]: false,
+  [STORAGE_KEYS.maxVideoAgeDays]: 30,
+  [STORAGE_KEYS.blockForYouShelf]: false,
+  [STORAGE_KEYS.blockBreakingNewsShelf]: false,
+  [STORAGE_KEYS.encryptionEnabled]: false,
+  [STORAGE_KEYS.encryptionSalt]: '',
+  [STORAGE_KEYS.encryptedData]: {}
+};
+
+export const MESSAGE_TYPES = {
+  BLOCKS_COUNT: 'BLOCKS_COUNT',
+  GET_STATS: 'GET_STATS',
+  SETTINGS_UPDATED: 'SETTINGS_UPDATED',
+  AD_BLOCKED: 'AD_BLOCKED'
+};
+
+export function getTodayString() {
+  return new Date().toISOString().split('T')[0];
+}
+
+export function getDefaultDailyStats() {
+  return { date: getTodayString(), count: 0 };
+}
+
+export function getDefaultWeeklyStats() {
+  return [];
+}
+
+
+
+############################################################
+# FILE: shared/messaging.js
+############################################################
+
+// shared/messaging.js
+import { MESSAGE_TYPES } from './constants.js';
+
+export async function sendToBackground(type, payload = {}) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type, ...payload }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(response);
+      }
+    });
+  });
+}
+
+export async function notifyYouTubeTabs(type, payload = {}) {
+  const tabs = await chrome.tabs.query({ url: '*://www.youtube.com/*' });
+  for (const tab of tabs) {
+    try {
+      await chrome.tabs.sendMessage(tab.id, { type, ...payload });
+    } catch (err) {}
+  }
+}
+
+export function addMessageListener(callback) {
+  chrome.runtime.onMessage.addListener(callback);
+}
+
+export function createSettingsUpdatedMessage() {
+  return { type: MESSAGE_TYPES.SETTINGS_UPDATED };
+}
+
+
+
+############################################################
+# FILE: shared/encryption.js
+############################################################
+
+// shared/encryption.js
+export async function deriveKey(passphrase, salt) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveBits', 'deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: enc.encode(salt), iterations: 100000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+export async function encryptData(data, passphrase, salt) {
+  const key = await deriveKey(passphrase, salt);
+  const enc = new TextEncoder();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    enc.encode(JSON.stringify(data))
+  );
+  return { iv: Array.from(iv), ciphertext: Array.from(new Uint8Array(encrypted)) };
+}
+
+export async function decryptData(encryptedObj, passphrase, salt) {
+  const key = await deriveKey(passphrase, salt);
+  const iv = new Uint8Array(encryptedObj.iv);
+  const ciphertext = new Uint8Array(encryptedObj.ciphertext);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    ciphertext
+  );
+  return JSON.parse(new TextDecoder().decode(decrypted));
+}
+
